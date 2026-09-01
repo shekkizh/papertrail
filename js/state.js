@@ -142,8 +142,12 @@ export function init({ reset = false, fromSnapshot = null } = {}) {
     state = migrate(fromSnapshot);
     return state;
   }
-  if (state && !reset) return state; // already initialized (e.g. from a share link)
-  if (!reset && hasLocalStorage) {
+  if (reset) {
+    state = defaultState();
+    return state;
+  }
+  if (state) return state; // already initialized (e.g. from a share link)
+  if (hasLocalStorage) {
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
       if (raw) state = migrate(JSON.parse(raw));
@@ -323,6 +327,110 @@ export function workspaceSnapshot() {
   };
 }
 
+// ---------- live sync: op outbox & remote application ----------
+// Every mutation emits an op so a sync transport (js/sync.js) can replicate
+// the workspace across devices. Remote application bypasses the outbox, so
+// replicated ops never re-broadcast.
+
+let outbox = [];
+let applyingRemote = false;
+let clientId = 'w-anon';
+
+export function setClientId(id) { clientId = String(id).slice(0, 40); }
+export function getClientId() { return clientId; }
+
+export function drainOutbox() {
+  const ops = outbox.map((o) => ({ ...o, actor: clientId }));
+  outbox = [];
+  return ops;
+}
+
+function pushOp(kind, payload) {
+  if (applyingRemote || readOnly) return;
+  outbox.push({ kind, payload, ts: Date.now() });
+  if (outbox.length > 100) outbox = outbox.slice(-100);
+}
+
+const dedupeById = (list, item) => (list.find((x) => x.id === item.id) ? list : [...list, item]);
+
+function applyOne({ kind, payload }) {
+  switch (kind) {
+    case 'title.set':
+      state.title = String(payload.title ?? '').slice(0, 120);
+      break;
+    case 'section.add':
+      if (!state.sections.find((s) => s.id === payload.section.id)) state.sections.push(payload.section);
+      break;
+    case 'section.rename': {
+      const s = state.sections.find((x) => x.id === payload.sectionId);
+      if (s) s.title = String(payload.title ?? s.title).slice(0, 60);
+      break;
+    }
+    case 'paper.add':
+      if (/^W\d+$/.test(String(payload.paper?.id)) && !state.papers[payload.paper.id]) {
+        state.papers[payload.paper.id] = sanitizePaper(payload.paper) ?? payload.paper;
+      }
+      break;
+    case 'paper.move': {
+      const p = state.papers[payload.paperId];
+      if (p && state.sections.find((s) => s.id === payload.sectionId)) p.sectionId = payload.sectionId;
+      break;
+    }
+    case 'paper.remove':
+      delete state.papers[payload.paperId];
+      break;
+    case 'note.add': {
+      const p = state.papers[payload.paperId];
+      if (p) p.notes = dedupeById(p.notes, payload.note);
+      break;
+    }
+    case 'note.delete': {
+      const p = state.papers[payload.paperId];
+      if (p) p.notes = p.notes.filter((n) => n.id !== payload.noteId);
+      break;
+    }
+    case 'artifact.add':
+      if (!state.artifacts.find((a) => a.id === payload.artifact.id)) state.artifacts.unshift(payload.artifact);
+      break;
+    case 'artifact.update': {
+      const a = state.artifacts.find((x) => x.id === payload.artifactId);
+      if (a) {
+        a.data = { markdown: String(payload.markdown ?? a.data.markdown) };
+        if (payload.title) a.title = String(payload.title).slice(0, 120);
+        if (Array.isArray(payload.sources)) a.sources = payload.sources;
+      }
+      break;
+    }
+    case 'artifact.delete':
+      state.artifacts = state.artifacts.filter((a) => a.id !== payload.artifactId);
+      break;
+    case 'inbox.set':
+      state.inbox = (Array.isArray(payload.papers) ? payload.papers : [])
+        .map((p) => sanitizePaper({ ...p, id: String(p?.id ?? '') }))
+        .filter(Boolean)
+        .slice(0, 25);
+      if (payload.query) state.lastQuery = String(payload.query).slice(0, 200);
+      break;
+    default:
+      break;
+  }
+}
+
+export function applyRemoteOps(ops) {
+  applyingRemote = true;
+  try {
+    for (const op of Array.isArray(ops) ? ops : []) applyOne(op);
+  } finally {
+    applyingRemote = false;
+  }
+  emit();
+}
+
+export function applySnapshot(snapshot) {
+  state = migrate(snapshot);
+  emit();
+}
+
 // ---------- activity / provenance ----------
 
 export function recordCall(tool, input, source) {
@@ -361,13 +469,15 @@ export function provenanceOf(callId) {
 export function setTitle(title) {
   if (readOnly) return;
   state.title = String(title).slice(0, 120);
+  pushOp('title.set', { title: state.title });
   emit();
 }
 
 export function addSection(title) {
   if (readOnly) return null;
-  const section = { id: uid('sec'), title };
+  const section = { id: uid('sec'), title: String(title).slice(0, 60) };
   state.sections.push(section);
+  pushOp('section.add', { section });
   emit();
   return section;
 }
@@ -375,7 +485,11 @@ export function addSection(title) {
 export function renameSection(sectionId, title) {
   if (readOnly) return null;
   const s = state.sections.find((x) => x.id === sectionId);
-  if (s) { s.title = String(title).slice(0, 60); emit(); }
+  if (s) {
+    s.title = String(title).slice(0, 60);
+    pushOp('section.rename', { sectionId, title: s.title });
+    emit();
+  }
   return s ?? null;
 }
 
@@ -419,6 +533,7 @@ export function addPaper(paper, { sectionId, addedBy = 'human', callId = null } 
     notes: [],
   };
   state.papers[record.id] = record;
+  pushOp('paper.add', { paper: record });
   emit();
   return { paper: record, added: true };
 }
@@ -429,6 +544,7 @@ export function movePaper(paperId, sectionId, _meta = {}) {
   const s = state.sections.find((x) => x.id === sectionId);
   if (!p || !s) return false;
   p.sectionId = sectionId;
+  pushOp('paper.move', { paperId, sectionId });
   emit();
   return true;
 }
@@ -437,6 +553,7 @@ export function removePaper(paperId, _meta = {}) {
   if (readOnly) return false;
   if (!state.papers[paperId]) return false;
   delete state.papers[paperId];
+  pushOp('paper.remove', { paperId });
   emit();
   return true;
 }
@@ -457,6 +574,7 @@ export function annotatePaper(paperId, { type, content, createdBy = 'human', cal
     createdAt: Date.now(),
   };
   p.notes.push(note);
+  pushOp('note.add', { paperId, note });
   emit();
   return note;
 }
@@ -467,7 +585,11 @@ export function deleteNote(paperId, noteId) {
   if (!p) return false;
   const before = p.notes.length;
   p.notes = p.notes.filter((n) => n.id !== noteId);
-  if (p.notes.length !== before) { emit(); return true; }
+  if (p.notes.length !== before) {
+    pushOp('note.delete', { paperId, noteId });
+    emit();
+    return true;
+  }
   return false;
 }
 
@@ -484,6 +606,7 @@ export function addArtifact({ kind, title, data, createdBy = 'human', callId = n
     createdAt: Date.now(),
   };
   state.artifacts.unshift(artifact);
+  pushOp('artifact.add', { artifact });
   emit();
   return artifact;
 }
@@ -500,6 +623,7 @@ export function updateArtifact(artifactId, { title, markdown, callId = null, sou
   artifact.revisions = artifact.revisions ?? [];
   artifact.revisions.push({ callId, ts: Date.now() });
   artifact.callId = callId ?? artifact.callId;
+  pushOp('artifact.update', { artifactId, title: artifact.title, markdown: artifact.data.markdown, sources: artifact.sources });
   emit();
   return artifact;
 }
@@ -508,7 +632,11 @@ export function deleteArtifact(artifactId) {
   if (readOnly) return false;
   const before = state.artifacts.length;
   state.artifacts = state.artifacts.filter((a) => a.id !== artifactId);
-  if (state.artifacts.length !== before) { emit(); return true; }
+  if (state.artifacts.length !== before) {
+    pushOp('artifact.delete', { artifactId });
+    emit();
+    return true;
+  }
   return false;
 }
 
@@ -516,6 +644,7 @@ export function setInbox(papers, { query = null } = {}) {
   if (readOnly) return;
   state.inbox = papers.map((p) => normalizePaper(p));
   state.lastQuery = query ?? state.lastQuery;
+  pushOp('inbox.set', { papers: state.inbox.slice(0, 25), query: state.lastQuery });
   emit();
 }
 

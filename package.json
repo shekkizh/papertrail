@@ -7,5 +7,8 @@
     "test": "node --test --test-timeout=45000 test/*.test.mjs",
     "serve": "python3 -m http.server 8347"
   },
-  "license": "MIT"
+  "license": "MIT",
+  "dependencies": {
+    "@neondatabase/serverless": "^1.1.0"
+  }
 }

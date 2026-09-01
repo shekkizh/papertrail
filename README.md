@@ -10,6 +10,12 @@ comparison tables, gap analyses, drafted related-work sections — with **16 str
 clicking through the UI blind; you watch it happen and keep the receipts.
 
 Highlights:
+- **Go live — cross-device collaboration**: hit ⚡ Go live and the workspace syncs across
+  devices through an op-log relay (Vercel function + Neon Postgres). Open the `?live=` link
+  anywhere — cards, notes, artifacts, *and agent tool calls* replicate to every screen in
+  seconds, each carrying its provenance receipt. Your collaborator's agent becomes visible on
+  your board as it works. The workspace id is the capability; offline behavior is unchanged
+  (live is opt-in, local-first).
 - **Steal the pattern**: [`pattern/`](./pattern/) extracts the whole design — typed tools on
   `document.modelContext`, a receipt ledger, provenance stamps on agent-written objects,
   re-runnable audits — into **~130 lines of zero-dependency code**, proven on a deliberately
@@ -17,8 +23,9 @@ Highlights:
   PaperTrail isn't just an app; it's a blueprint any canvas, dashboard, or storefront can adopt.
 - **Live co-watch**: open the app in two windows of the same browser and both stay in sync in
   real time — drag a card in one and watch it land in the other, agent writes streaming into
-  both. No backend; just the platform's `storage` events. Agent work is *watchable*, not hidden:
-  the **live trail** strip shows every tool call as a dot colored by who made it.
+  both. No backend needed for this tier; just the platform's `storage` events. Agent work is
+  *watchable*, not hidden: the **live trail** strip shows every tool call as a dot colored by
+  who made it.
 - **Share links**: encode the whole workspace in the URL — the shared snapshot registers six
   read tools, so *another person's agent* can load, audit, and reason over your review. One
   click duplicates it into your own browser to make it editable. The share link itself *is* an
@@ -110,7 +117,9 @@ and concrete, so confirmation prompts stay meaningful. All schemas use closed
    in the auditable **Activity** tab. In ChatGPT's browser or Codex, a real model takes the
    driver's seat instead.
 4. **Any browser, second person**: click **Share** — the link carries the whole workspace; the
-   recipient's agent can immediately query the snapshot with six read tools.
+   recipient's agent can immediately query the snapshot with six read tools. Or click
+   **⚡ Go live** and share the `?live=` link — a full two-way collaboration session across
+   devices, agents included.
 
 Your workspace persists in `localStorage`. Nothing is sent anywhere except queries to the
 OpenAlex and Semantic Scholar APIs.
@@ -123,11 +132,15 @@ OpenAlex and Semantic Scholar APIs.
   cold start. See PLAN.md for the full static-vs-backend rationale.
 - `js/tools.js` is DOM-free, so `npm test` (Node's built-in runner) drives the exact tool
   definitions agents see — validation, live OpenAlex calls, provenance chains — plus a stubbed
-  Semantic Scholar suite pinning resolve/enrich/contexts/recommendations plumbing and outage
-  degradation: 24 tests total.
+  Semantic Scholar suite, snapshot-sanitization security tests, and live-sync op round-trips:
+  30 tests total.
 - `js/webmcp.js` registers natively when `document.modelContext` exists; otherwise installs a
   spec-shaped local shim (`registerTool`/`getTools`/`executeTool`) so the demo agent, UI, and
   tests exercise identical tool code in any environment.
+- Live sync (`api/sync.js` + `js/sync.js`) is an opt-in op-log relay over Neon Postgres on
+  Vercel: workspaces, a bigserial op sequence, and actor presence; the client drains its op
+  outbox and applies remote ops idempotently. `tools/mock-server.mjs` serves the same API
+  contract locally for offline testing. Everything else stays static and local-first.
 - Registration uses an `AbortController` signal; tools run in the top-level document (required
   by ChatGPT Site tools); the page is origin-isolated static HTTPS.
 

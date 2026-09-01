@@ -43,6 +43,14 @@ Write: `add_papers` (with per-paper notes), `move_papers`, `remove_papers`, `ann
 
 **Ambition features beyond the core loop**
 
+- *Go live (cross-device sync)*: every mutation emits an op to an outbox; ⚡ Go live creates a
+  cloud workspace (`api/sync.js` on Vercel + Neon Postgres: workspaces, bigserial op log,
+  actor presence; id-as-capability). A `?live=` link joins from the server snapshot and polls
+  with a visibility-aware cadence, draining local ops and applying remote ones idempotently —
+  human edits *and agent tool calls* replicate across devices with receipts attached. The
+  static/local-first mode remains the default; live is opt-in. Verified against
+  `tools/mock-server.mjs` (same API contract): relay semantics by curl, two-window flow in the
+  browser, 30/30 tests.
 - *Share links*: workspace serialized (gzip+base64) into the URL hash; a shared snapshot
   registers six read tools so another person's agent can audit and reason over the review.
   Cross-session, cross-agent collaboration with zero backend.
@@ -66,13 +74,13 @@ js/ui/*.js       board, search, inspector, activity log, demo agent (in-page Web
 test/            node --test suite hitting the real OpenAlex API through tools.js
 ```
 
-Deployment: Vercel (static, no build; origin-isolated HTTPS satisfies the WebMCP security
-model). Why static and not a backend: the user's agent is the only LLM in the loop — a server
-would duplicate it; the workspace never leaves the browser; a judge's first visit can't hit a
-cold start or an auth wall. The one real client-side gap (full-text reading) is partially
-closed with CORS-open Semantic Scholar enrichment instead. Testing: `npm test` (24 tests —
-tools + live OpenAlex + stubbed Semantic Scholar) plus the in-page demo agent as an
-end-to-end harness.
+Deployment: Vercel. Default experience is static and local-first (no cold start, workspace
+never leaves the browser); ⚡ Go live opts into cross-device replication through a single
+serverless function over Neon Postgres — the user's agent stays the only LLM in the loop.
+The one real client-side gap (full-text reading) is partially closed with CORS-open Semantic
+Scholar enrichment. Testing: `npm test` (30 tests — tools + live OpenAlex + stubbed Semantic
+Scholar + sync op round-trips), the in-page demo agent, and `tools/mock-server.mjs` for the
+sync contract.
 
 **Demo video beats (≤3 min)**
 1. Open the live URL in ChatGPT's browser → "Site tools: 14 available" (0:00–0:20)
