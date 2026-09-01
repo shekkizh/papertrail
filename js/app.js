@@ -2,6 +2,7 @@
 // share links, and the Site-tools explorer.
 
 import * as store from './state.js';
+import * as sync from './sync.js';
 import { setupWebMCP, webmcp, getRegistryForExplorer, activeToolDefs, shareToolCount } from './webmcp.js';
 import { toolDefs, toMarkdown, toBibtex } from './tools.js';
 import { renderBoard } from './ui/board.js';
@@ -122,9 +123,64 @@ async function openToolsExplorer() {
   dialog.showModal();
 }
 
-// ---------- share links ----------
+// ---------- live mode (cross-device sync) ----------
+
+function renderLiveStatus(status) {
+  const chip = $('live-status');
+  if (!status) { chip.hidden = true; return; }
+  chip.hidden = false;
+  if (status.ok) {
+    chip.textContent = `⚡ live · ${status.peers} online`;
+    chip.title = `Synced to live workspace ${sync.currentId ?? ''} — human and agent actions replicate to every open device`;
+  } else {
+    chip.textContent = '◌ reconnecting…';
+    chip.title = `Live sync retrying: ${status.error ?? ''} (queued ops are kept)`;
+  }
+}
+
+async function goLive() {
+  $('live-btn').disabled = true;
+  $('live-btn').textContent = '⚡ creating…';
+  try {
+    const { id } = await sync.createLive();
+    try { sessionStorage.setItem('papertrail.ownHash', '1'); } catch { /* private mode */ }
+    const url = `${location.origin}${location.pathname}?live=${id}`;
+    history.replaceState(null, '', url);
+    toast('Workspace is live — the link in your address bar syncs every device.');
+    location.reload();
+  } catch (err) {
+    toast(`Going live failed: ${err.message}`);
+    $('live-btn').disabled = false;
+    $('live-btn').textContent = '⚡ Go live';
+  }
+}
+
+async function bootLive() {
+  const liveId = new URLSearchParams(location.search).get('live');
+  if (!liveId || !/^[a-z0-9]{6,20}$/.test(liveId)) return null;
+  const { seq } = await sync.joinLive(liveId);
+  sync.currentId = liveId;
+  sync.startSync(liveId, renderLiveStatus);
+  $('live-btn').hidden = true;
+  $('reset-btn').hidden = true;
+  const share = $('share-btn');
+  share.textContent = 'Copy live link';
+  share.title = 'Copy the live link — anyone (and their agent) opening it joins this workspace';
+  return { liveId, seq };
+}
 
 async function shareWorkspace() {
+  // in live mode the share button distributes the live link instead
+  if (sync.currentId) {
+    const url = `${location.origin}${location.pathname}?live=${sync.currentId}`;
+    try {
+      await navigator.clipboard.writeText(url);
+      toast('Live link copied — every device (and every agent) that opens it joins this workspace.');
+    } catch {
+      prompt('Live link:', url);
+    }
+    return;
+  }
   const encoded = await store.encodeWorkspace();
   const url = `${location.origin}${location.pathname}#w=${encoded}`;
   if (url.length > 30000) {
@@ -200,9 +256,20 @@ function renderHeader(state) {
 }
 
 async function boot() {
-  const shared = await bootFromShareLink();
+  const liveId = new URLSearchParams(location.search).get('live');
   store.init();
   store.wireCrossTabSync();
+  let live = null;
+  if (liveId && /^[a-z0-9]{6,20}$/.test(liveId)) {
+    try {
+      live = await bootLive();
+    } catch (err) {
+      toast(`Joining live workspace failed: ${err.message}`);
+      $('live-status').hidden = true;
+    }
+  } else {
+    await bootFromShareLink();
+  }
   const board = $('board');
   const searchRail = $('search-rail');
   const inspector = $('inspector');
@@ -271,14 +338,16 @@ async function boot() {
 
   $('tools-btn').addEventListener('click', openToolsExplorer);
   $('share-btn').addEventListener('click', shareWorkspace);
+  $('live-btn').addEventListener('click', goLive);
   $('demo-btn').addEventListener('click', () => openDemo());
   $('reset-btn').addEventListener('click', () => {
     if (confirm('Clear the whole workspace? This cannot be undone.')) store.resetWorkspace();
   });
-  if (shared) {
+  if (!live && store.isReadOnly()) {
     $('share-btn').hidden = true;
     $('reset-btn').hidden = true;
     $('demo-btn').hidden = true;
+    $('live-btn').hidden = true;
     $('ws-title').setAttribute('contenteditable', 'false');
   }
 
