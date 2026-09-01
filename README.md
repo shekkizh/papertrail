@@ -10,6 +10,10 @@ comparison tables, gap analyses, drafted related-work sections — with **16 str
 clicking through the UI blind; you watch it happen and keep the receipts.
 
 Highlights:
+- **⏪ Replay — the review's history as film**: every mutation is an op in a persisted
+  log. Hit ⏪ replay on the live trail and watch the review assemble itself — cards landing
+  colored by who placed them, notes ticking up, artifacts publishing — scrubbable to any
+  moment. Auditable by construction: the film *is* the op log.
 - **Go live — cross-device collaboration**: hit ⚡ Go live and the workspace syncs across
   devices through an op-log relay (Vercel function + Neon Postgres). Open the `?live=` link
   anywhere — cards, notes, artifacts, *and agent tool calls* replicate to every screen in
@@ -183,8 +187,8 @@ agent-written note with a soft overreach so the audit has something to catch.
    showing "⚡ live · 2 online" and the guest opening a receipts popover.
 7. 2:15 — Human clicks **⟳ verify** on an artifact: sources refetched from OpenAlex live,
    diffs shown. *"The audit is re-runnable, not decorative."*
-8. 2:35 — Flash [`pattern/demo.html`](./pattern/demo.html) for five seconds: *"same 130 lines,
-   a storefront."* Close, over the split-screen: *"The next web isn't scraped by agents — it's
+8. 2:35 — Flash **⏪ replay**: the review assembles itself on screen, op by op. Then flash
+   [`pattern/demo.html`](./pattern/demo.html) for five seconds: *"same 130 lines, a storefront."* Close, over the split-screen: *"The next web isn't scraped by agents — it's
    operated by them, with receipts. PaperTrail is one app; the pattern is for all of them."*
 
 Production tips: pre-record agent A's half so model latency doesn't burn the clock; show the
