@@ -186,12 +186,28 @@ export function emit() {
   }
 }
 
+function persistNow() {
+  clearTimeout(persistTimer);
+  persistTimer = null;
+  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); } catch { /* quota */ }
+}
+
 function schedulePersist() {
   if (!hasLocalStorage || readOnly) return;
+  // background tabs get their timers throttled, which would silently stall
+  // cross-tab sync — write through immediately whenever we're not visible
+  if (typeof document !== 'undefined' && document.hidden) {
+    persistNow();
+    return;
+  }
   clearTimeout(persistTimer);
-  persistTimer = setTimeout(() => {
-    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); } catch { /* quota */ }
-  }, 250);
+  persistTimer = setTimeout(persistNow, 250);
+}
+
+if (typeof document !== 'undefined') {
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden && persistTimer) persistNow(); // never lose the tail
+  });
 }
 
 // ---------- share-link encode/decode ----------
