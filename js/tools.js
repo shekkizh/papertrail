@@ -14,7 +14,7 @@ export function setCallSource(source) { callSource = source; }
 
 function fail(msg) { throw new Error(msg); }
 
-function validate(input, schema, toolName) {
+function validate(input, schema, toolName, path = '') {
   if (schema.type !== 'object') return;
   if (input === null || typeof input !== 'object' || Array.isArray(input)) {
     fail(`${toolName}: input must be an object`);
@@ -22,35 +22,52 @@ function validate(input, schema, toolName) {
   for (const key of schema.required ?? []) {
     if (input[key] === undefined) fail(`${toolName}: missing required property "${key}"`);
   }
+  if (schema.additionalProperties === false) {
+    for (const key of Object.keys(input)) {
+      if (!(key in (schema.properties ?? {}))) {
+        fail(`${toolName}: unexpected property "${key}"`);
+      }
+    }
+  }
   for (const [key, prop] of Object.entries(schema.properties ?? {})) {
     const v = input[key];
     if (v === undefined) continue;
+    const label = path ? `${path}.${key}` : key;
     switch (prop.type) {
+      case 'object':
+        if (typeof v !== 'object' || Array.isArray(v) || v === null) {
+          fail(`${toolName}: "${label}" must be an object`);
+        }
+        if (prop.properties) validate(v, prop, toolName, label);
+        break;
       case 'string':
-        if (typeof v !== 'string') fail(`${toolName}: "${key}" must be a string`);
+        if (typeof v !== 'string') fail(`${toolName}: "${label}" must be a string`);
         if (prop.enum && !prop.enum.includes(v)) {
-          fail(`${toolName}: "${key}" must be one of ${prop.enum.join(', ')}`);
+          fail(`${toolName}: "${label}" must be one of ${prop.enum.join(', ')}`);
         }
         if (prop.maxLength && v.length > prop.maxLength) {
-          fail(`${toolName}: "${key}" exceeds ${prop.maxLength} characters`);
+          fail(`${toolName}: "${label}" exceeds ${prop.maxLength} characters`);
         }
         break;
       case 'integer':
       case 'number':
-        if (!Number.isInteger(v) && prop.type === 'integer') fail(`${toolName}: "${key}" must be an integer`);
-        if (typeof v !== 'number') fail(`${toolName}: "${key}" must be a number`);
-        if (prop.minimum !== undefined && v < prop.minimum) fail(`${toolName}: "${key}" must be >= ${prop.minimum}`);
-        if (prop.maximum !== undefined && v > prop.maximum) fail(`${toolName}: "${key}" must be <= ${prop.maximum}`);
+        if (!Number.isInteger(v) && prop.type === 'integer') fail(`${toolName}: "${label}" must be an integer`);
+        if (typeof v !== 'number') fail(`${toolName}: "${label}" must be a number`);
+        if (prop.minimum !== undefined && v < prop.minimum) fail(`${toolName}: "${label}" must be >= ${prop.minimum}`);
+        if (prop.maximum !== undefined && v > prop.maximum) fail(`${toolName}: "${label}" must be <= ${prop.maximum}`);
         break;
       case 'boolean':
-        if (typeof v !== 'boolean') fail(`${toolName}: "${key}" must be a boolean`);
+        if (typeof v !== 'boolean') fail(`${toolName}: "${label}" must be a boolean`);
         break;
       case 'array':
-        if (!Array.isArray(v)) fail(`${toolName}: "${key}" must be an array`);
-        if (prop.minItems !== undefined && v.length < prop.minItems) fail(`${toolName}: "${key}" needs at least ${prop.minItems} item(s)`);
-        if (prop.maxItems !== undefined && v.length > prop.maxItems) fail(`${toolName}: "${key}" allows at most ${prop.maxItems} items`);
+        if (!Array.isArray(v)) fail(`${toolName}: "${label}" must be an array`);
+        if (prop.minItems !== undefined && v.length < prop.minItems) fail(`${toolName}: "${label}" needs at least ${prop.minItems} item(s)`);
+        if (prop.maxItems !== undefined && v.length > prop.maxItems) fail(`${toolName}: "${label}" allows at most ${prop.maxItems} items`);
         if (prop.items?.type === 'string') {
-          if (v.some((x) => typeof x !== 'string')) fail(`${toolName}: "${key}" must contain only strings`);
+          if (v.some((x) => typeof x !== 'string')) fail(`${toolName}: "${label}" must contain only strings`);
+        }
+        if (prop.items?.type === 'object' && prop.items.properties) {
+          for (const item of v) validate(item, prop.items, toolName, `${label}[]`);
         }
         break;
       default:
@@ -70,7 +87,7 @@ function compact(w) {
     venue: w.venue,
     cited_by: w.citedBy,
     primary_topic: w.primaryTopic,
-    has_abstract: Boolean(w.abstract),
+    abstract_snippet: excerpt(w.abstract, 240),
   };
 }
 
@@ -171,8 +188,9 @@ export const toolDefs = [
     title: 'Search literature',
     description:
       'Search OpenAlex (250M+ scholarly works) by keyword. Results are staged in the app Inbox panel so the ' +
-      'human can see them; nothing is added to the workspace until add_papers is called. Prefer 2-3 targeted ' +
-      'searches over one broad query.',
+      'human can see them (a new search replaces the previous staging); nothing is added to the workspace ' +
+      'until add_papers is called. Results include abstract snippets — usually enough to pick the best papers ' +
+      'and write grounded summary notes without extra calls.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -183,15 +201,16 @@ export const toolDefs = [
       required: ['query'],
       additionalProperties: false,
     },
-    annotations: { readOnlyHint: true },
+    // stages results in the human-visible Inbox, so it is state-mutating
+    annotations: { untrustedContentHint: true },
     async execute({ query, max_results = 8, from_year = null }, { signal } = {}) {
       const results = await oa.searchWorks(query, { perPage: max_results, fromYear: from_year, signal });
-      store.setInbox(results);
+      store.setInbox(results, { query });
       return {
         query,
         result_count: results.length,
         results: results.map(compact),
-        next_step: 'Results are visible in the Inbox. Use add_papers with paper_id values to add them to the workspace.',
+        next_step: 'Results are visible in the Inbox. Use add_papers (with per-paper notes where useful) to place them on the workspace.',
       };
     },
   }),
@@ -209,7 +228,7 @@ export const toolDefs = [
       required: ['paper_id'],
       additionalProperties: false,
     },
-    annotations: { readOnlyHint: true },
+    annotations: { readOnlyHint: true, untrustedContentHint: true },
     async execute({ paper_id }, { signal } = {}) {
       const local = store.getPaper(paper_id) ?? store.getState().inbox.find((p) => p.id === paper_id);
       const work = local?.abstract !== undefined && local?.abstract !== null ? local : await oa.getWork(paper_id, signal);
@@ -241,7 +260,7 @@ export const toolDefs = [
       required: ['paper_id'],
       additionalProperties: false,
     },
-    annotations: { readOnlyHint: true },
+    annotations: { readOnlyHint: true, untrustedContentHint: true },
     async execute({ paper_id, max_citations = 8 }, { signal } = {}) {
       const p = store.getPaper(paper_id) ?? store.getState().inbox.find((x) => x.id === paper_id);
       const work = p ?? await oa.getWork(paper_id, signal);
@@ -253,7 +272,7 @@ export const toolDefs = [
           note: 'Semantic Scholar is rate-limited or has not indexed this paper. Characterize it from the abstract instead.',
         };
       }
-      return { available: true, ...res };
+      return { available: true, paper_id, ...res };
     },
   }),
 
@@ -261,12 +280,50 @@ export const toolDefs = [
     name: 'get_workspace_state',
     title: 'Read workspace state',
     description:
-      'The human and you are looking at the same canvas. Call this first to see every section, paper, note ' +
-      'count, and artifact before planning multi-step work.',
+      'The human and you are looking at the same canvas. Call this first: it shows every section, paper, ' +
+      'note count, and artifact — plus what the human currently has selected in the inspector ' +
+      '(human_selection), so you can react to what they are reading.',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
     annotations: { readOnlyHint: true },
     async execute() {
-      return { ...store.workspaceSnapshot(), how_to_read: 'sections[] each list their papers; addedBy tells you who placed each paper (human or agent).' };
+      return {
+        ...store.workspaceSnapshot(),
+        how_to_read:
+          'sections[] list their papers; addedBy says who placed each paper (human/agent). ' +
+          'human_selection is what the human is inspecting right now. Use get_artifact(artifact_id) to read an artifact\'s full current text — including the human\'s edits.',
+      };
+    },
+  }),
+
+  tool({
+    name: 'get_artifact',
+    title: 'Read an artifact',
+    description:
+      'Read the full current text of one artifact (comparison table, gap analysis, related-work draft) by id. ' +
+      'This returns what the canvas holds NOW — including any edits the human made after you published. ' +
+      'Read it before revising anything.',
+    inputSchema: {
+      type: 'object',
+      properties: { artifact_id: { type: 'string', description: 'From get_workspace_state artifacts[].id' } },
+      required: ['artifact_id'],
+      additionalProperties: false,
+    },
+    annotations: { readOnlyHint: true, untrustedContentHint: true },
+    async execute({ artifact_id }) {
+      const a = store.getState().artifacts.find((x) => x.id === artifact_id);
+      if (!a) {
+        fail(`Unknown artifact "${artifact_id}". Call get_workspace_state for current artifact ids.`);
+      }
+      return {
+        artifact_id: a.id,
+        kind: a.kind,
+        title: a.title,
+        markdown: a.data.markdown,
+        sources: a.sources ?? [],
+        revisions: (a.revisions ?? []).length,
+        created_by: a.createdBy,
+        provenance_call_id: a.callId,
+      };
     },
   }),
 
@@ -275,26 +332,32 @@ export const toolDefs = [
     title: 'Add papers to workspace',
     description:
       'Add papers from the Inbox (or by OpenAlex id) to a section of the canvas. The cards appear immediately ' +
-      'for the human. Optionally attach a first note to each added paper.',
+      'for the human. Optionally attach per-paper notes via "notes" — one entry per paper_id, each grounded ' +
+      'in that paper\'s abstract snippet (from search results) or details.',
     inputSchema: {
       type: 'object',
       properties: {
         paper_ids: { type: 'array', items: { type: 'string' }, minItems: 1, maxItems: 10 },
         section: { type: 'string', description: 'Section title or id. Defaults to the first section.' },
-        note: {
-          type: 'object',
-          description: 'Optional note attached to every paper added by this call.',
-          properties: {
-            type: { type: 'string', enum: store.NOTE_TYPES },
-            content: { type: 'string', maxLength: 2000 },
+        notes: {
+          type: 'array',
+          description: 'Optional per-paper notes. Match paper_id to the papers you are adding.',
+          maxItems: 10,
+          items: {
+            type: 'object',
+            properties: {
+              paper_id: { type: 'string' },
+              type: { type: 'string', enum: store.NOTE_TYPES },
+              content: { type: 'string', maxLength: 2000 },
+            },
+            required: ['paper_id', 'type', 'content'],
           },
-          required: ['type', 'content'],
         },
       },
       required: ['paper_ids'],
       additionalProperties: false,
     },
-    async execute({ paper_ids, section = null, note = null }, { signal, callId } = {}) {
+    async execute({ paper_ids, section = null, notes = [] }, { signal, callId } = {}) {
       const target = resolveSection(section);
       if (section && !target) fail(`Unknown section "${section}". Sections: ${store.getState().sections.map((s) => s.title).join(', ')}`);
       const out = [];
@@ -306,12 +369,20 @@ export const toolDefs = [
           addedBy: callSource === 'human' ? 'human' : 'agent',
           callId,
         });
-        if (note && added) {
+        let noteAttached = false;
+        const note = added ? notes.find((n) => n.paper_id === id) : null;
+        if (note) {
           store.annotatePaper(paper.id, { type: note.type, content: note.content, createdBy: 'agent', callId, sources: [paper.id] });
+          noteAttached = true;
         }
-        out.push({ paper_id: paper.id, title: paper.title, added, section: target.title });
+        out.push({ paper_id: paper.id, title: paper.title, added, section: target.title, note_attached: noteAttached });
       }
-      return { added_to: target.title, papers: out, visible_to_human: true };
+      return {
+        added_to: target.title,
+        papers: out,
+        skipped_notes: notes.filter((n) => !paper_ids.includes(n.paper_id)).map((n) => n.paper_id),
+        visible_to_human: true,
+      };
     },
   }),
 
@@ -391,23 +462,23 @@ export const toolDefs = [
           description: 'Suggested axes, e.g. ["method","benchmarks","key finding","limitations"]. You choose the final axes.',
         },
       },
-      required: ['paper_ids'],
-      additionalProperties: false,
-    },
-    annotations: { readOnlyHint: true },
-    async execute({ paper_ids, dimensions = null }) {
-      const papers = paper_ids.map((id) => {
-        const p = store.getPaper(id) ?? store.getState().inbox.find((x) => x.id === id);
-        if (!p) fail(`Paper ${id} not found in workspace or inbox.`);
-        return p;
-      });
-      return {
-        suggested_dimensions: dimensions,
-        papers: papers.map((p) => paperMaterial(p, { abstractChars: 900 })),
-        next_step: 'Write the comparison table as markdown and publish it with save_artifact (kind: "comparison").',
-      };
-    },
-  }),
+    required: ['paper_ids'],
+    additionalProperties: false,
+  },
+  annotations: { readOnlyHint: true, untrustedContentHint: true },
+  async execute({ paper_ids, dimensions = null }) {
+    const papers = paper_ids.map((id) => {
+      const p = store.getPaper(id) ?? store.getState().inbox.find((x) => x.id === id);
+      if (!p) fail(`Paper ${id} not found in workspace or inbox.`);
+      return p;
+    });
+    return {
+      suggested_dimensions: dimensions,
+      papers: papers.map((p) => paperMaterial(p, { abstractChars: 900 })),
+      next_step: 'You write the comparison — this tool only gathers the material. Analyze it, then publish the table as markdown with save_artifact (kind: "comparison").',
+    };
+  },
+}),
 
   tool({
     name: 'find_connections',
@@ -477,6 +548,7 @@ export const toolDefs = [
       const sec = section ? resolveSection(section) : null;
       if (section && !sec) fail(`Unknown section "${section}".`);
       let papers = sec ? store.getSectionPapers(sec.id) : store.allPapers();
+      const totalAvailable = papers.length;
       papers = papers
         .sort((a, b) => (b.notes.length - a.notes.length) || (b.citedBy - a.citedBy))
         .slice(0, max_papers);
@@ -485,6 +557,8 @@ export const toolDefs = [
         workspace_title: store.getState().title,
         style,
         papers: papers.map((p) => paperMaterial(p, { abstractChars: 700 })),
+        total_available: totalAvailable,
+        truncated: totalAvailable > papers.length,
         citation_style: 'Cite inline as [Firstauthor Year] and list each cited paper_id at the end. Never cite papers absent from this material.',
       };
     },
@@ -496,10 +570,12 @@ export const toolDefs = [
     description:
       'Publish markdown you wrote (comparison table, gap analysis, related-work draft) as an artifact on the ' +
       'canvas. The human sees it immediately, can edit it, and can inspect which tool calls produced it. ' +
-      'List the paper_ids your text is grounded in as sources.',
+      'To revise an existing artifact after the human edits it: get_artifact first, incorporate their changes, ' +
+      'then call this again with the same artifact_id.',
     inputSchema: {
       type: 'object',
       properties: {
+        artifact_id: { type: 'string', description: 'To UPDATE an existing artifact in place (preserving its position); omit to create a new one.' },
         kind: { type: 'string', enum: ['comparison', 'gaps', 'draft', 'summary'] },
         title: { type: 'string', maxLength: 120 },
         markdown: { type: 'string', minLength: 1, maxLength: 20000 },
@@ -508,8 +584,24 @@ export const toolDefs = [
       required: ['kind', 'title', 'markdown'],
       additionalProperties: false,
     },
-    async execute({ kind, title, markdown, sources = [] }, { callId } = {}) {
+    async execute({ artifact_id = null, kind, title, markdown, sources = [] }, { callId } = {}) {
       const validSources = sources.filter((id) => store.getPaper(id));
+      if (artifact_id) {
+        const updated = store.updateArtifact(artifact_id, {
+          title,
+          markdown,
+          callId,
+          sources: validSources,
+        });
+        if (!updated) fail(`Unknown artifact "${artifact_id}" — get_workspace_state lists current ids.`);
+        return {
+          artifact_id: updated.id,
+          updated_in_place: true,
+          visible_to_human: true,
+          sources_count: validSources.length,
+          ignored_unknown_sources: sources.length - validSources.length,
+        };
+      }
       const artifact = store.addArtifact({
         kind, title, data: { markdown },
         createdBy: 'agent',
@@ -518,6 +610,7 @@ export const toolDefs = [
       });
       return {
         artifact_id: artifact.id,
+        updated_in_place: false,
         visible_to_human: true,
         sources_count: validSources.length,
         ignored_unknown_sources: sources.length - validSources.length,
@@ -537,7 +630,7 @@ export const toolDefs = [
       properties: { paper_id: { type: 'string' }, limit: { type: 'integer', minimum: 1, maximum: 10 } },
       additionalProperties: false,
     },
-    annotations: { readOnlyHint: true },
+    annotations: { untrustedContentHint: true },
     async execute({ paper_id = null, limit = 6 }, { signal } = {}) {
       let seed = paper_id ? store.getPaper(paper_id) : null;
       if (paper_id && !seed) seed = await oa.getWork(paper_id, signal);
@@ -575,7 +668,7 @@ export const toolDefs = [
   tool({
     name: 'export_workspace',
     title: 'Export workspace',
-    description: 'Export the full workspace as markdown (survey skeleton with notes and artifacts), BibTeX, or JSON.',
+    description: 'Export the full workspace as markdown (survey skeleton with notes and artifacts), BibTeX, or JSON. JSON is the shareable snapshot (activity log excluded). Large exports are truncated in the result — the human can always download the full file from the Export menu.',
     inputSchema: {
       type: 'object',
       properties: { format: { type: 'string', enum: ['markdown', 'bibtex', 'json'] } },
@@ -583,9 +676,19 @@ export const toolDefs = [
     },
     annotations: { readOnlyHint: true },
     async execute({ format = 'markdown' }) {
-      if (format === 'bibtex') return { format, content: toBibtex() };
-      if (format === 'json') return { format, content: JSON.stringify(store.getState(), null, 2) };
-      return { format, content: toMarkdown() };
+      const LIMIT = 18000;
+      let content;
+      if (format === 'bibtex') content = toBibtex();
+      else if (format === 'json') {
+        const s = store.getState();
+        content = JSON.stringify({ ...s, activity: undefined }, null, 2);
+      } else content = toMarkdown();
+      const truncated = content.length > LIMIT;
+      return {
+        format,
+        truncated,
+        content: truncated ? `${content.slice(0, LIMIT)}\n\n…[truncated — use the app's Export menu for the full file]` : content,
+      };
     },
   }),
 ];

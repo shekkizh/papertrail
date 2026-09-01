@@ -5,6 +5,8 @@
 const STORAGE_KEY = 'papertrail.workspace.v1';
 
 let state = null;
+let readOnly = false;          // share-link mode: view a snapshot without owning it
+const uiContext = { paperId: null, tab: 'paper' }; // what the human is looking at
 const listeners = new Set();
 let persistTimer = null;
 
@@ -22,14 +24,48 @@ function defaultState() {
     ],
     papers: {},          // openalexId -> paper record (with .notes[])
     inbox: [],           // normalized papers staged from searches (agent or human)
-    artifacts: [],       // { id, kind: comparison|gaps|draft, title, data, createdBy, callId, createdAt }
+    artifacts: [],       // { id, kind: comparison|gaps|draft|summary, title, data:{markdown}, createdBy, callId, createdAt, sources }
     activity: [],        // { id, ts, tool, input, summary, source, ok }
+    lastQuery: null,
   };
 }
 
 const hasLocalStorage = typeof localStorage !== 'undefined';
 
-export function init({ reset = false } = {}) {
+function sanitizePaper(p) {
+  if (!p || typeof p !== 'object' || !/^W\d+$/.test(String(p.id ?? ''))) return null;
+  return {
+    ...p,
+    title: String(p.title ?? 'Untitled'),
+    authors: Array.isArray(p.authors) ? p.authors.filter((a) => typeof a === 'string') : [],
+    notes: Array.isArray(p.notes) ? p.notes : [],
+    citedBy: Number.isFinite(p.citedBy) ? p.citedBy : 0,
+    year: p.year ?? null,
+  };
+}
+
+function migrate(s) {
+  const d = defaultState();
+  const merged = { ...d, ...(typeof s === 'object' && s ? s : {}) };
+  const papers = {};
+  for (const [id, p] of Object.entries(merged.papers ?? {})) {
+    const clean = sanitizePaper({ ...p, id });
+    if (clean) papers[id] = clean;
+  }
+  merged.papers = papers;
+  merged.inbox = Array.isArray(merged.inbox) ? merged.inbox : [];
+  merged.artifacts = (Array.isArray(merged.artifacts) ? merged.artifacts : [])
+    .filter((a) => a && typeof a === 'object' && a.data && typeof a.data.markdown === 'string');
+  merged.activity = Array.isArray(merged.activity) ? merged.activity : [];
+  return merged;
+}
+
+export function init({ reset = false, fromSnapshot = null } = {}) {
+  if (fromSnapshot) {
+    state = migrate(fromSnapshot);
+    return state;
+  }
+  if (state && !reset) return state; // already initialized (e.g. from a share link)
   if (!reset && hasLocalStorage) {
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
@@ -42,11 +78,6 @@ export function init({ reset = false } = {}) {
   return state;
 }
 
-function migrate(s) {
-  const d = defaultState();
-  return { ...d, ...s, papers: s.papers ?? {}, activity: s.activity ?? [] };
-}
-
 export function subscribe(fn) {
   listeners.add(fn);
   return () => listeners.delete(fn);
@@ -54,15 +85,69 @@ export function subscribe(fn) {
 
 export function emit() {
   schedulePersist();
-  for (const fn of listeners) fn(state);
+  // isolate listeners: one broken panel must not freeze persist or the others
+  for (const fn of listeners) {
+    try { fn(state); } catch (err) { console.error('[PaperTrail] render error', err); }
+  }
 }
 
 function schedulePersist() {
-  if (!hasLocalStorage) return;
+  if (!hasLocalStorage || readOnly) return;
   clearTimeout(persistTimer);
   persistTimer = setTimeout(() => {
     try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); } catch { /* quota */ }
   }, 250);
+}
+
+// ---------- share-link encode/decode ----------
+
+export async function encodeWorkspace() {
+  const json = JSON.stringify(state);
+  if (typeof CompressionStream === 'function') {
+    const stream = new Blob([json]).stream().pipeThrough(new CompressionStream('gzip'));
+    const buf = await new Response(stream).arrayBuffer();
+    const bytes = new Uint8Array(buf);
+    let bin = '';
+    for (const b of bytes) bin += String.fromCharCode(b);
+    return `gz:${btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')}`;
+  }
+  return `json:${btoa(unescape(encodeURIComponent(json)))}`;
+}
+
+export function decodeWorkspace(encoded) {
+  if (encoded.startsWith('gz:')) {
+    const b64 = encoded.slice(3).replace(/-/g, '+').replace(/_/g, '/');
+    const bin = atob(b64);
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    return new Response(new Blob([bytes]).stream().pipeThrough(new DecompressionStream('gzip')))
+      .json();
+  }
+  if (encoded.startsWith('json:')) {
+    return Promise.resolve(JSON.parse(decodeURIComponent(escape(atob(encoded.slice(5))))));
+  }
+  return Promise.reject(new Error('Unknown share format'));
+}
+
+// ---------- share / read-only mode ----------
+
+export function setReadOnly(value) {
+  readOnly = Boolean(value);
+}
+
+export function isReadOnly() {
+  return readOnly;
+}
+
+// ---------- what the human is looking at (exposed to agents) ----------
+
+export function setUiContext(ctx) {
+  uiContext.paperId = ctx.paperId ?? null;
+  uiContext.tab = ctx.tab ?? 'paper';
+}
+
+export function getUiContext() {
+  return { ...uiContext };
 }
 
 // ---------- reads ----------
@@ -84,6 +169,7 @@ export function allPapers() {
 }
 
 export function workspaceSnapshot() {
+  const sel = getUiContext();
   return {
     title: state.title,
     sections: state.sections.map((s) => ({
@@ -102,9 +188,16 @@ export function workspaceSnapshot() {
         noteTypes: p.notes.map((n) => n.type),
       })),
     })),
-    artifactCount: state.artifacts.length,
-    artifactTitles: state.artifacts.map((a) => a.title),
+    artifacts: state.artifacts.map((a) => ({
+      id: a.id,
+      kind: a.kind,
+      title: a.title,
+      createdBy: a.createdBy,
+      markdownChars: a.data.markdown.length,
+    })),
+    human_selection: sel.paperId ? { paper_id: sel.paperId, inspector_tab: sel.tab } : null,
     inboxCount: state.inbox.length,
+    lastQuery: state.lastQuery,
   };
 }
 
@@ -139,14 +232,16 @@ export function provenanceOf(callId) {
   return state.activity.find((a) => a.id === callId) ?? null;
 }
 
-// ---------- mutations ----------
+// ---------- mutations (no-ops in read-only share mode) ----------
 
 export function setTitle(title) {
-  state.title = title;
+  if (readOnly) return;
+  state.title = String(title).slice(0, 120);
   emit();
 }
 
 export function addSection(title) {
+  if (readOnly) return null;
   const section = { id: uid('sec'), title };
   state.sections.push(section);
   emit();
@@ -154,8 +249,9 @@ export function addSection(title) {
 }
 
 export function renameSection(sectionId, title) {
+  if (readOnly) return null;
   const s = state.sections.find((x) => x.id === sectionId);
-  if (s) { s.title = title; emit(); }
+  if (s) { s.title = String(title).slice(0, 60); emit(); }
   return s ?? null;
 }
 
@@ -182,6 +278,7 @@ export function normalizePaper(raw) {
 }
 
 export function addPaper(paper, { sectionId, addedBy = 'human', callId = null } = {}) {
+  if (readOnly) return { paper: null, added: false };
   const norm = normalizePaper(paper);
   const existing = state.papers[norm.id];
   if (existing) {
@@ -203,6 +300,7 @@ export function addPaper(paper, { sectionId, addedBy = 'human', callId = null } 
 }
 
 export function movePaper(paperId, sectionId, _meta = {}) {
+  if (readOnly) return false;
   const p = state.papers[paperId];
   const s = state.sections.find((x) => x.id === sectionId);
   if (!p || !s) return false;
@@ -212,6 +310,7 @@ export function movePaper(paperId, sectionId, _meta = {}) {
 }
 
 export function removePaper(paperId, _meta = {}) {
+  if (readOnly) return false;
   if (!state.papers[paperId]) return false;
   delete state.papers[paperId];
   emit();
@@ -221,6 +320,7 @@ export function removePaper(paperId, _meta = {}) {
 export const NOTE_TYPES = ['summary', 'method', 'finding', 'limitation', 'connection', 'question'];
 
 export function annotatePaper(paperId, { type, content, createdBy = 'human', callId = null, sources = [] }) {
+  if (readOnly) return null;
   const p = state.papers[paperId];
   if (!p) return null;
   const note = {
@@ -238,6 +338,7 @@ export function annotatePaper(paperId, { type, content, createdBy = 'human', cal
 }
 
 export function deleteNote(paperId, noteId) {
+  if (readOnly) return false;
   const p = state.papers[paperId];
   if (!p) return false;
   const before = p.notes.length;
@@ -247,10 +348,11 @@ export function deleteNote(paperId, noteId) {
 }
 
 export function addArtifact({ kind, title, data, createdBy = 'human', callId = null, sources = [] }) {
+  if (readOnly) return null;
   const artifact = {
     id: uid('art'),
     kind,
-    title,
+    title: String(title).slice(0, 120),
     data,
     createdBy,
     callId,
@@ -262,24 +364,45 @@ export function addArtifact({ kind, title, data, createdBy = 'human', callId = n
   return artifact;
 }
 
+// Update an artifact in place — the agent's revision path. Returns the updated
+// artifact, or null if the id is unknown. Revision provenance appends.
+export function updateArtifact(artifactId, { title, markdown, callId = null, sources = null }) {
+  if (readOnly) return null;
+  const artifact = state.artifacts.find((a) => a.id === artifactId);
+  if (!artifact) return null;
+  if (title) artifact.title = String(title).slice(0, 120);
+  if (typeof markdown === 'string') artifact.data = { markdown };
+  if (Array.isArray(sources)) artifact.sources = sources;
+  artifact.revisions = artifact.revisions ?? [];
+  artifact.revisions.push({ callId, ts: Date.now() });
+  artifact.callId = callId ?? artifact.callId;
+  emit();
+  return artifact;
+}
+
 export function deleteArtifact(artifactId) {
+  if (readOnly) return false;
   const before = state.artifacts.length;
   state.artifacts = state.artifacts.filter((a) => a.id !== artifactId);
   if (state.artifacts.length !== before) { emit(); return true; }
   return false;
 }
 
-export function setInbox(papers) {
+export function setInbox(papers, { query = null } = {}) {
+  if (readOnly) return;
   state.inbox = papers.map((p) => normalizePaper(p));
+  state.lastQuery = query ?? state.lastQuery;
   emit();
 }
 
 export function clearInbox() {
+  if (readOnly) return;
   state.inbox = [];
   emit();
 }
 
 export function resetWorkspace() {
+  if (readOnly) return;
   state = defaultState();
   emit();
 }

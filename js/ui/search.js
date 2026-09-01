@@ -12,15 +12,24 @@ const PROMPTS = [
   'What is underexplored in my current corpus? Propose gap hypotheses and a follow-up search for each.',
 ];
 
+let searchSeq = 0;
+
 function esc(s) {
   return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
 export function renderSearch(container, state) {
+  // don't clobber a search the human is typing
+  const active = document.activeElement;
+  if (active && container.contains(active) &&
+      (active.id === 'search-input' || active.id === 'search-year')) {
+    return;
+  }
+  const wasOpen = container.querySelector('#search-input')?.value ?? '';
   container.innerHTML = `
     <div class="search-block">
       <form id="search-form" class="search-form">
-        <input id="search-input" type="search" placeholder="Search 250M+ papers…" autocomplete="off" />
+        <input id="search-input" type="search" placeholder="Search 250M+ papers…" autocomplete="off" value="${esc(wasOpen)}" />
         <div class="search-row">
           <label class="year-label">from <input id="search-year" type="number" min="1990" max="2026" placeholder="2019" /></label>
           <button type="submit" class="btn btn-primary">Search</button>
@@ -34,6 +43,7 @@ export function renderSearch(container, state) {
         <h3>Inbox <span class="hint">— staged by you or your agent</span></h3>
         <button id="inbox-clear" class="btn btn-ghost btn-xs" ${state.inbox.length ? '' : 'hidden'}>clear</button>
       </div>
+      ${state.lastQuery ? `<p class="inbox-query">latest: “${esc(state.lastQuery)}”</p>` : ''}
       <div id="inbox-list" class="inbox-list"></div>
       <div id="inbox-empty" class="empty small" ${state.inbox.length ? 'hidden' : ''}>
         Search results land here — whether you searched or your agent did.
@@ -59,14 +69,16 @@ export function renderSearch(container, state) {
     const q = container.querySelector('#search-input').value.trim();
     if (!q) return;
     const fromYear = parseInt(container.querySelector('#search-year').value, 10) || null;
+    const seq = ++searchSeq;
     status.hidden = false;
     status.textContent = 'Searching OpenAlex…';
     try {
       const results = await oa.searchWorks(q, { perPage: 10, fromYear });
-      store.setInbox(results);
+      if (seq !== searchSeq) return; // a newer search superseded this one
+      store.setInbox(results, { query: q });
       status.hidden = true;
     } catch (err) {
-      status.textContent = `Search failed: ${err.message}`;
+      if (seq === searchSeq) status.textContent = `Search failed: ${err.message}`;
     }
   });
 
@@ -90,13 +102,8 @@ export function renderSearch(container, state) {
   inbox.addEventListener('click', (e) => {
     const addId = e.target.dataset.add;
     const infoId = e.target.dataset.details;
-    if (addId) {
-      store.addPaper(store.getState().inbox.find((p) => p.id === addId), { addedBy: 'human' });
-      e.target.textContent = '✓';
-      setTimeout(() => { e.target.textContent = '＋ add'; }, 900);
-    } else if (infoId) {
-      select(infoId);
-    }
+    if (addId) store.addPaper(store.getState().inbox.find((p) => p.id === addId), { addedBy: 'human' });
+    else if (infoId) select(infoId);
   });
   container.querySelector('#inbox-clear')?.addEventListener('click', () => store.clearInbox());
 
@@ -105,11 +112,10 @@ export function renderSearch(container, state) {
       const text = PROMPTS[Number(chip.dataset.i)];
       try { await navigator.clipboard.writeText(text); } catch { /* clipboard blocked */ }
       chip.classList.add('copied');
-      const old = chip.querySelector('.copy-glyph').textContent;
       chip.querySelector('.copy-glyph').textContent = '✓ copied';
       setTimeout(() => {
         chip.classList.remove('copied');
-        chip.querySelector('.copy-glyph').textContent = old;
+        chip.querySelector('.copy-glyph').textContent = '⧉';
       }, 1200);
     });
   });

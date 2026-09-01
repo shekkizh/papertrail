@@ -130,24 +130,30 @@ async function runScenario(topic) {
 
     const search = await step('search_literature', { query: topic, max_results: 8 }, 'search OpenAlex');
     if (!search?.result_count) { log('No results — try another topic.', 'err'); return; }
-    log(`Found ${search.result_count}. Taking the three best relevance matches for a starter set.`);
+    log(`Found ${search.result_count}. Picking the three best relevance matches — abstract snippets are in the results, so notes can be grounded without extra calls.`);
 
     // results arrive in OpenAlex relevance order — keep it
     const picks = search.results.slice(0, 3);
-    const added = await step('add_papers', { paper_ids: picks.map((p) => p.paper_id), section: 'To Read' }, 'place cards on the canvas');
+    const added = await step('add_papers', {
+      paper_ids: picks.map((p) => p.paper_id),
+      section: 'To Read',
+      notes: picks.map((p) => ({
+        paper_id: p.paper_id,
+        type: 'summary',
+        content: clip(sentences(p.abstract_snippet ?? p.title).slice(0, 2).join(' '), 280),
+      })),
+    }, 'place cards + grounded summary notes in one call');
     const ids = (added?.papers ?? []).filter((p) => p.paper_id).map((p) => p.paper_id);
     if (ids.length < 2) { log('Could not add enough papers to continue.', 'err'); return; }
 
-    const details = [];
     for (const id of ids) {
-      const d = await step('get_paper_details', { paper_id: id }, 'read the abstract');
-      if (d?.abstract) {
-        details.push(d);
+      const d = await step('get_paper_details', { paper_id: id }, 'read the full record');
+      if (d?.enrichment?.tldr) {
         await step('annotate_paper', {
           paper_id: id,
-          type: 'summary',
-          content: clip(sentences(d.abstract).slice(0, 2).join(' '), 280),
-        }, `summary note, grounded in the abstract of “${clip(d.title, 40)}”`);
+          type: 'finding',
+          content: clip(`TL;DR (Semantic Scholar): ${d.enrichment.tldr}`, 280),
+        }, `TLDR note for “${clip(d.title, 40)}”`);
       }
     }
 
@@ -207,9 +213,11 @@ export function openDemo(defaultTopic = 'LLM agent communication failures') {
         <h2>Guided demo agent</h2>
         <button class="icon-btn" id="demo-close" title="Close">✕</button>
       </div>
-      <p class="hint">An in-page agent driving this app's registered WebMCP tools (${webmcp.mode === 'native'
+      <p class="hint"><strong>This is a deterministic preview, not a language model</strong> — a scripted in-page
+      agent driving this app's registered WebMCP tools (${webmcp.mode === 'native'
         ? 'via document.modelContext.executeTool — the same path your browser agent uses'
-        : 'WebMCP is not active in this browser, so tools run through a local stand-in'}). In ChatGPT's browser, <em>you</em> would just type the prompt.</p>
+        : 'WebMCP is not active in this browser, so tools run through a local stand-in'}). It shows the
+      mechanics of tool-mediated work. In ChatGPT's browser or Codex, <em>a real model</em> decides each call.</p>
       <form id="demo-form" class="demo-form">
         <input id="demo-topic" value="${esc(defaultTopic)}" placeholder="Research topic…" />
         <button class="btn btn-primary" type="submit" id="demo-run">Run demo</button>
@@ -219,7 +227,8 @@ export function openDemo(defaultTopic = 'LLM agent communication failures') {
     dialog.querySelector('#demo-close').addEventListener('click', () => dialog.close());
   }
   logEl = dialog.querySelector('#demo-log');
-  logEl.innerHTML = '';
+  // reopening mid-run must not wipe a running log
+  if (!running) logEl.innerHTML = '';
   if (!running) {
     dialog.querySelector('#demo-form').onsubmit = (e) => {
       e.preventDefault();

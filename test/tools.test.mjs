@@ -18,8 +18,8 @@ function call(name, input) {
   return tool.execute(input, {});
 }
 
-test('tool surface: 15 well-formed tools', () => {
-  assert.equal(toolDefs.length, 15);
+test('tool surface: 16 well-formed tools', () => {
+  assert.equal(toolDefs.length, 16);
   const names = new Set();
   for (const t of toolDefs) {
     assert.match(t.name, /^[a-zA-Z0-9_.-]{1,128}$/, `name ${t.name} must satisfy WebMCP naming rules`);
@@ -45,20 +45,26 @@ test('search_literature finds works and stages the inbox', async () => {
   assert.equal(store.getState().inbox.length, res.result_count, 'inbox staged');
 });
 
-test('add_papers places cards in a section with provenance', async () => {
+test('add_papers places cards + per-paper notes with provenance', async () => {
   const inbox = store.getState().inbox;
   const ids = inbox.slice(0, 3).map((p) => p.id);
   const res = await call('add_papers', {
     paper_ids: ids.slice(0, 2),
     section: 'To Read',
-    note: { type: 'summary', content: 'Staged by the test agent.' },
+    notes: [
+      { paper_id: ids[0], type: 'summary', content: 'Grounded summary for the first paper.' },
+      { paper_id: 'W0000000000', type: 'summary', content: 'orphan — should be reported as skipped' },
+    ],
   });
   assert.equal(res.added_to, 'To Read');
   assert.ok(res.papers.every((p) => p.added));
+  assert.deepEqual(res.skipped_notes, ['W0000000000']);
   const papers = store.getSectionPapers(store.getState().sections[0].id);
   assert.equal(papers.length, 2);
   assert.equal(papers[0].addedBy, 'agent');
   assert.equal(papers[0].notes.length, 1);
+  assert.equal(papers[0].notes[0].createdBy, 'agent');
+  assert.equal(papers[1].notes.length, 0, 'notes only attach to their paper');
   const activity = store.getState().activity;
   assert.ok(activity.length >= 1);
   assert.equal(activity[0].tool, 'add_papers');
@@ -134,11 +140,43 @@ test('save_artifact publishes agent prose with sources', async () => {
     sources: [...ids, 'W999999999'],
   });
   assert.ok(res.artifact_id);
+  assert.equal(res.updated_in_place, false);
   assert.equal(res.sources_count, ids.length);
   assert.equal(res.ignored_unknown_sources, 1);
   const art = store.getState().artifacts[0];
   assert.equal(art.createdBy, 'agent');
   assert.ok(store.provenanceOf(art.callId));
+});
+
+test('get_artifact reads the human-edited canvas; save_artifact revises in place', async () => {
+  const art = store.getState().artifacts[0];
+  // human edits the artifact directly (UI path)
+  art.data.markdown = '| a | b |\n| --- | --- |\n| human edit | 2 |';
+  store.emit();
+  const read = await call('get_artifact', { artifact_id: art.id });
+  assert.match(read.markdown, /human edit/, 'agent sees the human edit');
+  assert.equal(read.kind, 'comparison');
+  const revised = await call('save_artifact', {
+    artifact_id: art.id,
+    kind: 'comparison',
+    title: art.title,
+    markdown: '| a | b |\n| --- | --- |\n| human edit | agent revision |',
+    sources: read.sources,
+  });
+  assert.equal(revised.updated_in_place, true);
+  const after = store.getState().artifacts.find((x) => x.id === art.id);
+  assert.match(after.data.markdown, /agent revision/);
+  assert.equal(after.revisions.length, 1, 'revision is receipted');
+  await assert.rejects(() => call('get_artifact', { artifact_id: 'art_nope' }), /Unknown artifact/);
+});
+
+test('human selection is exposed to agents in workspace state', async () => {
+  store.setUiContext({ paperId: store.allPapers()[0].id, tab: 'paper' });
+  const ws = await call('get_workspace_state', {});
+  assert.ok(ws.human_selection);
+  assert.equal(ws.human_selection.inspector_tab, 'paper');
+  assert.ok(ws.artifacts.length >= 1);
+  for (const a of ws.artifacts) assert.match(a.id, /^art_/);
 });
 
 test('get_citation_contexts: verbatim contexts, or graceful degradation', async () => {
@@ -193,6 +231,8 @@ test('validation: schemas reject bad agent input with useful errors', async () =
   await assert.rejects(() => call('add_papers', { paper_ids: [] }), /at least 1/);
   await assert.rejects(() => call('move_papers', { paper_ids: ['W1'], to_section: 'Nowhere' }), /Unknown section/);
   await assert.rejects(() => call('get_paper_details', { paper_id: 'not-an-id' }), /Not an OpenAlex work id/);
+  await assert.rejects(() => call('search_literature', { query: 'x', bogus: true }), /unexpected property "bogus"/);
+  await assert.rejects(() => call('add_papers', { paper_ids: ['W1'], notes: [{ paper_id: 'W1', type: 'nope', content: 'x' }] }), /must be one of/);
 });
 
 test('activity log: every call is auditable', () => {

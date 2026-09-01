@@ -1,15 +1,25 @@
 # PaperTrail
 
-**A literature-review canvas where you and your AI agent work the same workspace, at the same time.**
+**A literature-review canvas where your agent works the same board you do — its searches, notes, comparisons, and drafts land as editable objects on your canvas, each with a click-to-audit receipt of the exact tool call that produced it.** It is a reference implementation of the *provenance pattern* for agent-native web apps: expose your state model as typed read/write tools, log every call, and any agent becomes a collaborator while the human stays in control. The same pattern generalizes to any canvas or dashboard app on the web.
 
-Live app: **https://papertrail-six-weld.vercel.app** *(WebMCP tools register automatically — open it in ChatGPT's browser, or Chrome with `chrome://flags/#enable-webmcp-testing` enabled)*
+Live app: **https://papertrail-six-weld.vercel.app** *(WebMCP tools register automatically — open it in ChatGPT's browser or Codex, or Chrome with `chrome://flags/#enable-webmcp-testing` enabled)*
 
-PaperTrail is a survey-planning board for researchers: sections of paper cards, structured
-notes, comparison tables, gap analyses, drafted related-work sections. What makes it new is
-that the app registers **15 structured tools on `document.modelContext`**, so your agent
-doesn't click through the UI blind — it reads and writes the app's real data model, with every
-action materializing on your canvas instantly and every agent-written object carrying
-**provenance back to the exact tool call that produced it**.
+PaperTrail is a survey-planning workspace for researchers: sections of paper cards, structured
+notes, comparison tables, gap analyses, drafted related-work sections. The app registers
+**16 structured tools on `document.modelContext`**, so your agent doesn't click through the UI
+blind — it reads and writes the app's real data model, with every action materializing on your
+canvas instantly and every agent-written object carrying **provenance back to the exact tool
+call that produced it**.
+
+Highlights beyond the core loop:
+- **Share links**: encode the whole workspace in the URL — the shared snapshot registers six
+  read tools, so *another person's agent* can load, audit, and reason over your review. One
+  click duplicates it into your own browser to make it editable.
+- **Site tools explorer**: a human-visible panel (⚙ Site tools) listing exactly what any
+  WebMCP agent discovers — names, schemas, and trust annotations.
+- **The agent sees what you see**: `get_workspace_state` includes what you currently have
+  selected; `get_artifact` returns an artifact's current text *including your edits* — so the
+  agent can revise its own draft after you mark it up (`save_artifact` updates in place).
 
 ---
 
@@ -49,9 +59,10 @@ OpenAlex and say so — so the app never hard-fails in a demo.
 
 | Tool | Kind | What it does |
 | --- | --- | --- |
-| `search_literature` | read | Search OpenAlex (250M+ works); results stage in the shared Inbox |
+| `search_literature` | read* | Search OpenAlex (250M+ works); results stage in the shared Inbox with abstract snippets |
 | `get_paper_details` | read | Full record: abstract, topics, venue, citations + S2 TLDR & open-access PDF |
-| `get_workspace_state` | read | The agent sees the same canvas the human sees |
+| `get_workspace_state` | read | The agent sees the same canvas — including what the human has selected |
+| `get_artifact` | read | An artifact's current text, human edits included |
 | `get_citation_contexts` | read | Verbatim sentences other papers use to cite this one, with intents |
 | `find_connections` | read | Deterministic citation-graph analysis: shared refs/authors/topics |
 | `identify_gaps` | read | Statistical gap hypotheses from topic co-occurrence sparsity |
@@ -59,16 +70,16 @@ OpenAlex and say so — so the app never hard-fails in a demo.
 | `draft_related_work` | read | Gathers cited material + citation-style contract for drafting |
 | `suggest_related` | read | S2 recommendations, falling back to OpenAlex relatedness |
 | `export_workspace` | read | Markdown survey skeleton / BibTeX / JSON |
-| `add_papers` | write | Place cards on the canvas (instantly visible to the human) |
+| `add_papers` | write | Place cards + per-paper grounded notes in one call |
 | `move_papers` | write | Move cards between sections |
 | `remove_papers` | write | Remove cards |
 | `annotate_paper` | write | Structured notes (summary/method/finding/limitation/connection/question) |
-| `save_artifact` | write | Publish agent-authored tables/drafts as editable canvas artifacts |
+| `save_artifact` | write | Publish agent-authored artifacts — or revise one in place after human edits |
 
-`get_citation_contexts` is the flagship read: for related-work writing, "what claim of this
-paper actually travels in the literature" is exactly the evidence an LLM normally lacks.
-Read tools declare `annotations: { readOnlyHint: true }`; write tools are deliberately few and
-concrete, so confirmation prompts stay meaningful. All schemas use closed
+\* `search_literature` and `suggest_related` stage results into the human-visible Inbox, so
+they honestly *do* mutate visible state and do not claim `readOnlyHint`. Tools returning
+third-party scholarly text declare `untrustedContentHint`. Write tools are deliberately few
+and concrete, so confirmation prompts stay meaningful. All schemas use closed
 `additionalProperties`, enums, and length bounds.
 
 ## Try it
@@ -81,11 +92,15 @@ concrete, so confirmation prompts stay meaningful. All schemas use closed
    - *"What's underexplored in my corpus? Propose gaps and a follow-up search for each."*
    - *"Draft a related-work section from my notes, then export the survey as BibTeX."*
 2. **Chrome** with `chrome://flags/#enable-webmcp-testing` enabled.
-3. **Any browser**: click **▶ Guided demo** — the in-page agent drives the same tools
-   end-to-end (search → add → annotate → compare → gaps → connections → draft) and you can
-   audit every call in the **Activity** tab.
+3. **Any browser**: click **▶ Guided demo** — a deterministic in-page agent (scripted, not an
+   LLM) drives the same tools end-to-end so you can watch the mechanics, and every call lands
+   in the auditable **Activity** tab. In ChatGPT's browser or Codex, a real model takes the
+   driver's seat instead.
+4. **Any browser, second person**: click **Share** — the link carries the whole workspace; the
+   recipient's agent can immediately query the snapshot with six read tools.
 
-Your workspace persists in `localStorage`. Nothing leaves your browser except OpenAlex queries.
+Your workspace persists in `localStorage`. Nothing is sent anywhere except queries to the
+OpenAlex and Semantic Scholar APIs.
 
 ## Implementation notes
 
@@ -96,7 +111,7 @@ Your workspace persists in `localStorage`. Nothing leaves your browser except Op
 - `js/tools.js` is DOM-free, so `npm test` (Node's built-in runner) drives the exact tool
   definitions agents see — validation, live OpenAlex calls, provenance chains — plus a stubbed
   Semantic Scholar suite pinning resolve/enrich/contexts/recommendations plumbing and outage
-  degradation: 21 tests total.
+  degradation: 23 tests total.
 - `js/webmcp.js` registers natively when `document.modelContext` exists; otherwise installs a
   spec-shaped local shim (`registerTool`/`getTools`/`executeTool`) so the demo agent, UI, and
   tests exercise identical tool code in any environment.
@@ -108,7 +123,7 @@ Your workspace persists in `localStorage`. Nothing leaves your browser except Op
 ```bash
 python3 -m http.server 8347   # or: npm run serve
 open http://localhost:8347
-npm test                      # 21 end-to-end tests (live OpenAlex + stubbed S2)
+npm test                      # 23 end-to-end tests (live OpenAlex + stubbed S2)
 ```
 
 ## Deploy (Vercel)
@@ -118,7 +133,7 @@ Vercel dashboard with all defaults.
 
 ## Demo video script (≤3 min)
 
-1. 0:00 — Live URL in ChatGPT's browser; **Site tools** shows 15 registered tools.
+1. 0:00 — Live URL in ChatGPT's browser; **Site tools** shows 16 registered tools.
 2. 0:20 — Human seeds two known papers, drags one to *Reading*, renames a section.
 3. 0:40 — Prompt: "find recent work on agent communication failures, add the top 5 to To Read
    with summary notes" → cards + notes appear live; open one note's *provenance* popover.

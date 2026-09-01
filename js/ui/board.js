@@ -17,11 +17,18 @@ function el(html) {
   return t.content.firstElementChild;
 }
 
+function escapeHtml(s) {
+  return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+function trim(s, n) { return s.length > n ? `${s.slice(0, n - 1)}…` : s; }
+
 function paperCard(p) {
   const who = WHO[p.addedBy] ?? WHO.human;
+  const selected = getSelection().paperId === p.id;
   const card = el(`
-    <article class="card" draggable="true" data-id="${p.id}" title="${p.title.replace(/"/g, '&quot;')}">
-      <button class="card-x" title="Remove from workspace" data-remove="${p.id}">✕</button>
+    <article class="card ${selected ? 'selected' : ''}" draggable="true" data-id="${p.id}" title="${escapeHtml(p.title)}">
+      <button class="card-x" title="Remove from workspace" aria-label="Remove ${escapeHtml(trim(p.title, 40))}">✕</button>
       <h4 class="card-title">${escapeHtml(p.title)}</h4>
       <p class="card-meta">${escapeHtml(p.authors.slice(0, 2).join(', '))}${p.authors.length > 2 ? ' et al.' : ''} · ${p.year ?? 'n.d.'}</p>
       <p class="card-meta dim">${escapeHtml(p.venue ?? '')}</p>
@@ -33,24 +40,26 @@ function paperCard(p) {
       </div>
     </article>`);
   card.addEventListener('click', (e) => {
-    if (e.target.dataset.remove) return;
+    if (e.target.classList.contains('card-x')) {
+      store.removePaper(p.id);
+      if (getSelection().paperId === p.id) select(null);
+      return;
+    }
     select(p.id);
   });
   card.addEventListener('dragstart', () => { dragId = p.id; card.classList.add('dragging'); });
-  card.addEventListener('dragend', () => card.classList.remove('dragging'));
+  card.addEventListener('dragend', () => {
+    card.classList.remove('dragging');
+    dragId = null; // also covers cancelled/escaped drags
+  });
   return card;
-}
-
-function trim(s, n) { return s.length > n ? `${s.slice(0, n - 1)}…` : s; }
-function escapeHtml(s) {
-  return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
 function column(section, papers) {
   const col = el(`
     <div class="column" data-section="${section.id}">
       <header class="col-head">
-        <h3 class="col-title" contenteditable="spellcheck-false" title="Click to rename">${escapeHtml(section.title)}</h3>
+        <h3 class="col-title" contenteditable="plaintext-only" spellcheck="false" title="Click to rename">${escapeHtml(section.title)}</h3>
         <span class="col-count">${papers.length}</span>
       </header>
       <div class="col-body"></div>
@@ -64,15 +73,9 @@ function column(section, papers) {
   body.addEventListener('drop', (e) => {
     e.preventDefault();
     body.classList.remove('over');
-    if (dragId) store.movePaper(dragId, section.id);
+    // validate against current state — a mid-drag agent render can invalidate the id
+    if (dragId && store.getPaper(dragId)) store.movePaper(dragId, section.id);
     dragId = null;
-  });
-
-  col.querySelector('.card-x')?.addEventListener('click', (e) => {
-    store.removePaper(e.target.dataset.remove);
-  });
-  col.querySelector('[data-remove]')?.addEventListener('click', (e) => {
-    store.removePaper(e.target.dataset.remove);
   });
 
   const title = col.querySelector('.col-title');
@@ -88,15 +91,14 @@ function column(section, papers) {
 }
 
 export function renderBoard(container, state) {
+  // don't clobber in-progress human edits (renaming a section, mid-drag)
+  const active = document.activeElement;
+  if (active && container.contains(active)) {
+    if (active.isContentEditable || active.classList.contains('dragging')) return;
+  }
   container.innerHTML = '';
-  const sel = getSelection();
   for (const section of state.sections) {
-    const papers = store.getSectionPapers(section.id);
-    const col = column(section, papers);
-    if (papers.some((p) => p.id === sel.paperId)) col.querySelector('.card[data-id]');
-    container.appendChild(col);
-    const selected = col.querySelector(`.card[data-id="${sel.paperId}"]`);
-    if (selected) selected.classList.add('selected');
+    container.appendChild(column(section, store.getSectionPapers(section.id)));
   }
   const add = el(`<button class="add-section" title="New section">＋ section</button>`);
   add.addEventListener('click', () => store.addSection('New section'));

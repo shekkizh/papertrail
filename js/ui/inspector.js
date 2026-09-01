@@ -88,9 +88,46 @@ function noteView(p, n) {
   return li;
 }
 
+function inboxPaperView(container, p) {
+  container.innerHTML = `
+    <div class="paper-head">
+      <p class="inbox-tag">In Inbox — not yet in the workspace</p>
+      <h2 class="paper-title">${esc(p.title)}</h2>
+      <p class="paper-meta">${esc(p.authors.join(', ') || 'Unknown authors')} · ${p.year ?? 'n.d.'}</p>
+      <p class="paper-meta dim">${esc(p.venue ?? '')} · ${p.citedBy} citations · ${esc(p.primaryTopic ?? '')}</p>
+      <div class="paper-links">
+        <button class="btn btn-primary btn-xs" id="insp-add">＋ add to workspace</button>
+        <a class="btn btn-ghost btn-xs" href="${esc(p.openalexUrl ?? `https://openalex.org/${p.id}`)}" target="_blank" rel="noopener">OpenAlex ↗</a>
+        ${p.oaUrl ? `<a class="btn btn-ghost btn-xs" href="${esc(p.oaUrl)}" target="_blank" rel="noopener">open access PDF ↗</a>` : ''}
+      </div>
+    </div>
+    ${p.abstract ? `<details class="abstract" open><summary>Abstract</summary><p>${esc(p.abstract)}</p></details>`
+      : '<p class="hint">No abstract available in OpenAlex.</p>'}
+    <p class="hint pad-x">Your agent staged this from a search. Add it to start a notes thread.</p>`;
+  container.querySelector('#insp-add').addEventListener('click', () => {
+    store.addPaper(p, { addedBy: 'human' });
+    select(p.id);
+  });
+}
+
 function paperTab(container, state) {
   const { paperId } = getSelection();
-  const p = paperId ? store.getPaper(paperId) : null;
+  if (!paperId) {
+    container.innerHTML = `
+      <div class="empty">
+        <p><strong>Nothing selected.</strong></p>
+        <p class="hint">Click any paper card to inspect it. Notes your agent writes appear here —
+        every one carries provenance back to the tool call that produced it.</p>
+      </div>`;
+    return;
+  }
+  const wsPaper = store.getPaper(paperId);
+  const inboxPaper = state.inbox.find((p) => p.id === paperId);
+  if (!wsPaper && inboxPaper) {
+    inboxPaperView(container, inboxPaper);
+    return;
+  }
+  const p = wsPaper;
   if (!p) {
     container.innerHTML = `
       <div class="empty">
@@ -202,6 +239,12 @@ function activityTab(container, state) {
 }
 
 export function renderInspector(container, state) {
+  // don't clobber a note the human is typing/editing
+  const active = document.activeElement;
+  if (active && container.contains(active) &&
+      (active.matches('textarea, input, select') || active.isContentEditable)) {
+    return;
+  }
   const { tab } = getSelection();
   const tabs = [
     ['paper', 'Paper'],
@@ -219,7 +262,13 @@ export function renderInspector(container, state) {
   else paperTab(body, state);
 
   container.querySelectorAll('.tab').forEach((b) =>
-    b.addEventListener('click', () => { setTab(b.dataset.tab); }));
+    b.addEventListener('click', () => {
+      // release focus so the render guard doesn't skip the tab switch
+      if (document.activeElement && container.contains(document.activeElement)) {
+        document.activeElement.blur();
+      }
+      setTab(b.dataset.tab);
+    }));
 }
 
 export function renderInspectorSafe(container, state) {

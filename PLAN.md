@@ -33,13 +33,23 @@ Before WebMCP the agent saw neither your workspace nor the effect of its actions
 text into a chat and you re-typed it into your tools. Here both parties see and shape one
 shared artifact, live.
 
-**Tool surface (the submission's core)**
+**Tool surface (the submission's core — 16 tools)**
 
-Read: `search_literature`, `get_paper_details`, `get_workspace_state`, `suggest_related`,
-`find_connections`, `identify_gaps`, `export_workspace`
-Write: `add_papers`, `move_papers`, `remove_papers`, `annotate_paper`,
-`create_comparison`, `draft_related_work` (returns structured source material for the agent
-to write from), `save_draft` (publishes agent-authored prose as an editable, cited artifact).
+Read: `search_literature`, `get_paper_details`, `get_workspace_state` (includes the human's
+live selection), `get_artifact`, `suggest_related`, `find_connections`, `identify_gaps`,
+`create_comparison`, `draft_related_work`, `get_citation_contexts`, `export_workspace`
+Write: `add_papers` (with per-paper notes), `move_papers`, `remove_papers`, `annotate_paper`,
+`save_artifact` (create or revise-in-place after human edits).
+
+**Ambition features beyond the core loop**
+
+- *Share links*: workspace serialized (gzip+base64) into the URL hash; a shared snapshot
+  registers six read tools so another person's agent can audit and reason over the review.
+  Cross-session, cross-agent collaboration with zero backend.
+- *Site tools explorer*: in-app panel showing the live tool registry (names, schemas,
+  annotations) — WebMCP made visible to human visitors.
+- *Provenance receipts*: every agent note/artifact links to the exact tool call; planned:
+  re-verification (refetch the source and diff stored vs live data).
 
 **Architecture**
 
