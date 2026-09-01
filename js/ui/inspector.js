@@ -203,12 +203,21 @@ function artifactView(a) {
   div.querySelector('[data-goto]')?.addEventListener('click', (e) => select(e.target.dataset.goto));
   div.querySelector('[data-verify]')?.addEventListener('click', async (e) => {
     const btn = e.target;
-    const out = div.querySelector(`[data-verify-result="${a.id}"]`);
     btn.disabled = true;
     btn.textContent = '⟳ verifying…';
+    // verify_sources logs to the activity trail, which re-renders this panel;
+    // always paint into the CURRENT dom, never the captured (detached) node.
+    const paint = (html) => {
+      const target = document.querySelector(`[data-verify-result="${a.id}"]`);
+      if (target) target.innerHTML = html;
+    };
+    const resetBtn = () => {
+      const live = document.querySelector(`[data-verify="${a.id}"]`);
+      if (live) { live.disabled = false; live.textContent = '⟳ verify'; }
+    };
     try {
       const res = await verifySources(a.sources);
-      out.innerHTML = res.results.map((r) => {
+      paint(res.results.map((r) => {
         const p = store.getPaper(r.paper_id);
         const label = esc((p?.title ?? r.paper_id).slice(0, 36));
         if (r.status === 'verified') return `<span class="verify-chip v-ok" title="Title, year, venue match live OpenAlex">✓ ${label}</span>`;
@@ -217,13 +226,11 @@ function artifactView(a) {
           return `<span class="verify-chip v-drift" title="${fields}">~ ${label} — ${fields}${r.cited_by_now != null ? ` · ${r.cited_by_now} cites now` : ''}</span>`;
         }
         return `<span class="verify-chip v-bad" title="${r.status}">✕ ${label} — ${r.status}</span>`;
-      }).join('') + `<span class="hint tiny">${res.verified}/${res.total} verified live · ${res.checked_at.slice(11, 19)} UTC</span>`;
-      btn.textContent = '⟳ verify';
-      btn.disabled = false;
+      }).join('') + `<span class="hint tiny">${res.verified}/${res.total} verified live · ${res.checked_at.slice(11, 19)} UTC</span>`);
+      resetBtn();
     } catch (err) {
-      out.innerHTML = `<span class="verify-chip v-bad">✕ verification failed: ${esc(String(err.message ?? err))}</span>`;
-      btn.textContent = '⟳ verify';
-      btn.disabled = false;
+      paint(`<span class="verify-chip v-bad">✕ verification failed: ${esc(String(err.message ?? err))}</span>`);
+      resetBtn();
     }
   });
   return div;
