@@ -21,21 +21,23 @@ any WebMCP agent while keeping the human in command.
 <script type="module">
   import { defineReceiptedTools, attachLedger } from './receipts.js';
 
-  const { register, callTool, getCalls, onChange, stamp } = defineReceiptedTools({
+  const { register, callTool, verifyCall, getCalls, onChange } = defineReceiptedTools({
     name: 'my-app',
     tools: [ /* { name, title, description, inputSchema, execute } */ ],
   });
   await register();                       // native WebMCP, or a spec-shaped local stand-in
   attachLedger(document.querySelector('#ledger')).bind({ getCalls, onChange, verifyCall });
-  // inside a write tool: obj.receipt = stamp()  → the object now carries its provenance
+  // inside a write tool: execute(input, { stamp }) { obj.receipt = stamp(); }
+  // → the object now carries its provenance; verifyCall re-runs reads only
 </script>
 ```
 
-Open [`demo.html`](./demo.html) for a complete one-file to-do app using it — three tools,
-receipts on every task, a ledger with re-verify. In ChatGPT's browser or Chrome with
-`chrome://flags/#enable-webmcp-testing`, the agent discovers `add_task`, `toggle_task`, and
-`get_tasks` automatically; in any other browser the demo still runs and the pattern is still
-visible.
+Open [`demo.html`](./demo.html) for a complete one-file **storefront** using it — four tools
+(add/remove/get/checkout), receipts on every cart line, a ledger with re-verify that refuses to
+re-execute writes. It is deliberately *not* a research app: the identical 130 lines that power
+PaperTrail's literature review power a shop. In ChatGPT's browser or Chrome with
+`chrome://flags/#enable-webmcp-testing`, the agent discovers the tools automatically; in any
+other browser the demo still runs and the pattern is still visible.
 
 ## Why this matters for the open web
 

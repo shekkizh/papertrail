@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>PaperTrail embedded — cross-origin tool delegation demo</title>
+<style>
+  :root { color-scheme: light; }
+  body { font-family: system-ui, sans-serif; margin: 0; color: #221d15; background: #f5f1e8; }
+  header { padding: 18px 24px; border-bottom: 1px solid #cfc4ae; background: #fffcf6; }
+  h1 { font-size: 19px; margin: 0 0 6px; }
+  p { color: #4a4336; line-height: 1.5; font-size: 13.5px; max-width: 860px; }
+  code { font-size: 0.9em; background: #efe9dc; padding: 1px 5px; border-radius: 5px; }
+  main { display: grid; grid-template-columns: 360px minmax(0, 1fr); gap: 0; min-height: calc(100vh - 130px); }
+  .side { padding: 16px 20px; border-right: 1px solid #cfc4ae; }
+  .frame-wrap { position: relative; }
+  iframe { width: 100%; height: calc(100vh - 130px); border: 0; }
+  input[type=url] { width: 100%; padding: 8px 10px; border: 1px solid #cfc4ae; border-radius: 8px; font: inherit; font-size: 12px; margin: 8px 0; }
+  button { font: inherit; font-weight: 600; padding: 7px 12px; border-radius: 8px; border: 1px solid #cfc4ae; background: #0e6b5c; color: #fff; cursor: pointer; }
+  .status { font-size: 12.5px; color: #6b4a12; background: #f7ead3; border-radius: 8px; padding: 8px 10px; margin-top: 10px; }
+  .tool { border: 1px solid #e0d8c8; border-radius: 9px; background: #fff; padding: 8px 10px; margin: 7px 0; font-size: 12.5px; }
+  .tool b { color: #0a4a40; font-family: ui-monospace, monospace; font-size: 12px; }
+  .tool small { color: #857a68; display: block; margin-top: 3px; line-height: 1.4; }
+</style>
+</head>
+<body>
+  <header>
+    <h1>A journal hosts a shared review — and delegates its audit tools to your agent</h1>
+    <p>This host page embeds a PaperTrail snapshot in an <code>&lt;iframe allow="tools"&gt;</code>. The snapshot
+    registers its six read tools with <code>exposedTo: [this origin]</code> (via <code>?embedOrigin=</code>), so the
+    <em>host</em> can discover them with <code>document.modelContext.getTools({ fromOrigins: [...] })</code> — the
+    WebMCP spec's cross-origin delegation surface. Execution stays with the embedding agent (Chrome with the
+    WebMCP flag), not this page: cross-top-level execution is intentionally out of scope.</p>
+  </header>
+  <main>
+    <div class="side">
+      <p style="margin:0"><strong>1.</strong> Snapshot URL to embed:</p>
+      <input id="src" type="url" placeholder="https://…/#w=gz:…" />
+      <button id="embed">Embed</button>
+      <p style="margin:14px 0 0"><strong>2.</strong> Discover the delegated tools from this host:</p>
+      <button id="discover">Discover tools (getTools + fromOrigins)</button>
+      <div id="status" class="status" hidden></div>
+      <div id="tools"></div>
+    </div>
+    <div class="frame-wrap" id="frame-wrap">
+      <p style="padding:24px; color:#857a68">Embed a snapshot URL to begin. For a true cross-origin run, serve this
+      page from a different origin than the snapshot (e.g. localhost vs. the deployed app) and open it in Chrome
+      with <code>chrome://flags/#enable-webmcp-testing</code>.</p>
+    </div>
+  </main>
+  <script>
+    const $ = (id) => document.getElementById(id);
+    let iframeOrigin = null;
+
+    $('embed').addEventListener('click', () => {
+      const url = $('src').value.trim();
+      let u;
+      try { u = new URL(url); } catch { status('Enter a valid snapshot URL.'); return; }
+      u.searchParams.set('embedOrigin', location.origin);
+      iframeOrigin = u.origin;
+      $('frame-wrap').innerHTML = '';
+      const f = document.createElement('iframe');
+      f.setAttribute('allow', 'tools');
+      f.src = u.toString();
+      $('frame-wrap').appendChild(f);
+      status(`Embedded ${esc(iframeOrigin)} with allow="tools" and ?embedOrigin=${esc(location.origin)}. Its six read tools now register with exposedTo.`);
+    });
+
+    $('discover').addEventListener('click', async () => {
+      if (!iframeOrigin) { status('Embed a snapshot first.'); return; }
+      if (typeof document.modelContext?.getTools !== 'function') {
+        status('This browser does not expose document.modelContext. Open in Chrome with chrome://flags/#enable-webmcp-testing (or ChatGPT\'s browser).');
+        return;
+      }
+      try {
+        const tools = await document.modelContext.getTools({ fromOrigins: [iframeOrigin] });
+        const mine = new Set(await document.modelContext.getTools().then((ts) => ts.map((t) => t.name)));
+        const delegated = tools.filter((t) => !mine.has(t.name));
+        $('tools').innerHTML = delegated.length
+          ? delegated.map((t) => `<div class="tool"><b>${esc(t.name)}</b>${t.annotations?.readOnlyHint ? ' <span style="color:#0a4a40">read</span>' : ''}<small>${esc(t.description)}</small></div>`).join('')
+          : '<div class="tool">No cross-origin tools discovered — check that the snapshot URL carried ?embedOrigin and the browser supports exposedTo.</div>';
+        status(delegated.length
+          ? `Delegated ${delegated.length} read tool(s) from ${esc(iframeOrigin)} — a WebMCP agent viewing THIS host page can now be offered the embedded review's audit tools.`
+          : 'Discovery ran; nothing delegated (see note above).');
+      } catch (err) {
+        status(`getTools({ fromOrigins }) failed: ${esc(String(err.message ?? err))}`);
+      }
+    });
+
+    function status(text) { const s = $('status'); s.hidden = false; s.textContent = text; }
+    function esc(s) { return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
+  </script>
+</body>
+</html>

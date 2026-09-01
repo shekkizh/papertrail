@@ -49,9 +49,21 @@ export function nativeAvailable() {
 async function registerNative() {
   webmcp.mode = 'native';
   webmcp.supported = true;
+  // Embedded snapshots can delegate their read tools to a host page: a share
+  // URL opened with ?embedOrigin=<host origin> registers with exposedTo, so
+  // the host can discover them via getTools({ fromOrigins }). Spec:
+  // https://webmachinelearning.github.io/webmcp/
+  const embedOrigin = isReadOnly()
+    ? new URLSearchParams(location.search).get('embedOrigin')
+    : null;
+  const validEmbed = embedOrigin && (() => { try { return new URL(embedOrigin).origin === embedOrigin; } catch { return false; } })();
   for (const def of activeToolDefs()) {
     try {
-      await document.modelContext.registerTool(def, { signal: controller.signal });
+      if (validEmbed) {
+        await document.modelContext.registerTool(def, { signal: controller.signal, exposedTo: [embedOrigin] });
+      } else {
+        await document.modelContext.registerTool(def, { signal: controller.signal });
+      }
       webmcp.registered.push(def.name);
     } catch (err) {
       webmcp.errors.push({ name: def.name, message: String(err?.message ?? err) });

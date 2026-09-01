@@ -238,8 +238,13 @@ export const toolDefs = [
       const work = local?.abstract !== undefined && local?.abstract !== null ? local : await oa.getWork(paper_id, signal);
       const wsPaper = store.getPaper(paper_id);
       const enrichment = await scholar.enrich({ doi: work.doi, title: work.title }, signal);
+      // reference arrays can hold hundreds of ids on a highly cited paper —
+      // return counts (find_connections re-hydrates when it needs the ids)
+      const { referencedWorks, relatedWorks, ...rest } = work;
       return {
-        ...work,
+        ...rest,
+        referenced_works_count: Array.isArray(referencedWorks) ? referencedWorks.length : null,
+        related_works_count: Array.isArray(relatedWorks) ? relatedWorks.length : null,
         enrichment,
         in_workspace: Boolean(wsPaper),
         section: wsPaper ? store.getState().sections.find((s) => s.id === wsPaper.sectionId)?.title : null,

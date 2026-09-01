@@ -4,26 +4,28 @@
 
 Live app: **https://papertrail-six-weld.vercel.app** *(WebMCP tools register automatically — open it in ChatGPT's browser or Codex, or Chrome with `chrome://flags/#enable-webmcp-testing` enabled)*
 
-PaperTrail is a survey-planning workspace for researchers: sections of paper cards, structured
-notes, comparison tables, gap analyses, drafted related-work sections. The app registers
-**16 structured tools on `document.modelContext`**, so your agent doesn't click through the UI
-blind — it reads and writes the app's real data model, with every action materializing on your
-canvas instantly and every agent-written object carrying **provenance back to the exact tool
-call that produced it**.
+A survey-planning workspace for researchers — sections of paper cards, structured notes,
+comparison tables, gap analyses, drafted related-work sections — with **16 structured tools on
+`document.modelContext`**. Your agent reads and writes the app's real data model instead of
+clicking through the UI blind; you watch it happen and keep the receipts.
 
-Highlights beyond the core loop:
-- **Live co-watch**: open the app in two windows of the same browser and both stay in sync in
-  real time — drag a card in one and watch it land in the other, agent writes streaming into
-  both. No backend; just the platform's `storage` events. The **live trail** strip under the
-  header shows every tool call as it happens, colored by who made it.
+Highlights:
 - **Steal the pattern**: [`pattern/`](./pattern/) extracts the whole design — typed tools on
   `document.modelContext`, a receipt ledger, provenance stamps on agent-written objects,
-  re-runnable audits — into **~130 lines of zero-dependency code** with a one-file demo app.
+  re-runnable audits — into **~130 lines of zero-dependency code**, proven on a deliberately
+  non-research domain: [a storefront demo](./pattern/demo.html) running the identical library.
   PaperTrail isn't just an app; it's a blueprint any canvas, dashboard, or storefront can adopt.
+- **Live co-watch**: open the app in two windows of the same browser and both stay in sync in
+  real time — drag a card in one and watch it land in the other, agent writes streaming into
+  both. No backend; just the platform's `storage` events. Agent work is *watchable*, not hidden:
+  the **live trail** strip shows every tool call as a dot colored by who made it.
 - **Share links**: encode the whole workspace in the URL — the shared snapshot registers six
   read tools, so *another person's agent* can load, audit, and reason over your review. One
   click duplicates it into your own browser to make it editable. The share link itself *is* an
-  agent-readable artifact — no separate "publish" step needed.
+  agent-readable artifact. Embedded via [`embed/host.html`](./embed/host.html) with
+  `?embedOrigin=`, the snapshot delegates those tools cross-origin (`exposedTo` +
+  `getTools({ fromOrigins })`) — a journal site can host a review and hand its audit tools to
+  the visitor's agent.
 - **Receipt re-verification**: every artifact's grounded sources can be re-checked against live
   OpenAlex metadata with one click (⟳ verify) — provenance as evidence, not decoration.
 - **Site tools explorer**: a human-visible panel (⚙ Site tools) listing exactly what any
@@ -162,8 +164,10 @@ agent-written note with a soft overreach so the audit has something to catch.
 6. 1:50 — Human clicks **⟳ verify** on an artifact: sources refetched from OpenAlex live,
    diffs shown. *"The audit is re-runnable, not decorative."*
 7. 2:10 — **Duplicate to my browser** → the host edits the flagged note (badge flips to *you*).
-8. 2:30 — Export BibTeX; show the **Activity** tab: every call, inputs, results. Close on
-   [`pattern/`](./pattern/): *"the same four moves, 130 lines, any web app."*
+8. 2:30 — Export BibTeX; show the **Activity** tab: every call, inputs, results. Flash
+   [`pattern/demo.html`](./pattern/demo.html) for five seconds: *"same 130 lines, a storefront."*
+   Close, over the split-screen: *"The next web isn't scraped by agents — it's operated by them,
+   with receipts. PaperTrail is one app; the pattern is for all of them."*
 
 Production tips: pre-record agent A's half so model latency doesn't burn the clock; keep the
 share-page tool registration moment in full view; the audit must catch something real.

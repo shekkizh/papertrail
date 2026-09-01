@@ -3,20 +3,22 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Receipts pattern demo — a to-do list any agent can operate, with a paper trail</title>
+<title>A storefront your agent operates — with receipts</title>
 <style>
   :root { color-scheme: light; }
-  body { font-family: system-ui, sans-serif; max-width: 640px; margin: 40px auto; padding: 0 20px; color: #221d15; }
+  body { font-family: system-ui, sans-serif; max-width: 660px; margin: 40px auto; padding: 0 20px; color: #221d15; }
   h1 { font-size: 22px; } p.lead { color: #6b6152; line-height: 1.5; }
   code { font-size: 0.9em; }
-  form { display: flex; gap: 8px; margin: 18px 0; }
-  input[type=text] { flex: 1; padding: 9px 12px; border: 1px solid #cfc4ae; border-radius: 9px; font: inherit; }
+  form { display: flex; gap: 8px; margin: 18px 0; flex-wrap: wrap; }
+  input { padding: 9px 12px; border: 1px solid #cfc4ae; border-radius: 9px; font: inherit; }
+  input[name=item] { flex: 1; min-width: 180px; } input[name=price] { width: 90px; }
   button { font: inherit; font-weight: 600; padding: 8px 14px; border-radius: 9px; border: 1px solid #cfc4ae; background: #0e6b5c; color: #fff; cursor: pointer; }
   button.ghost { background: none; color: #6b6152; }
   ul { list-style: none; padding: 0; }
   li { display: flex; gap: 10px; align-items: baseline; padding: 9px 12px; border: 1px solid #e0d8c8; border-radius: 10px; margin-bottom: 7px; background: #fff; }
-  li.done label { text-decoration: line-through; color: #857a68; }
+  li .price { margin-left: auto; font-variant-numeric: tabular-nums; color: #4a4336; }
   li code { font-size: 10px; color: #0a4a40; background: #e2efec; border-radius: 6px; padding: 2px 6px; cursor: pointer; }
+  li .rm { background: none; border: none; color: #b3372e; cursor: pointer; font-weight: 700; }
   .banner { background: #f7ead3; border: 1px solid #e4cf9f; color: #6b4a12; padding: 10px 14px; border-radius: 10px; font-size: 13px; }
   #ledger { margin-top: 26px; border-top: 1px dashed #cfc4ae; padding-top: 12px; }
   .receipts-hint { color: #857a68; font-size: 13px; }
@@ -31,103 +33,137 @@
 </style>
 </head>
 <body>
-  <h1>A to-do list your agent operates — with receipts</h1>
-  <p class="lead">The PaperTrail pattern applied to the smallest possible app. Three tools register on
-  <code>document.modelContext</code> (or a local stand-in), every call lands in the ledger below,
-  and every task carries a <code>receipt</code> linking it to the exact tool call that last touched it.
-  Click a receipt to re-run that call through the registered tools and see whether the outcome still holds.</p>
+  <h1>A storefront your agent operates — with receipts</h1>
+  <p class="lead">The PaperTrail pattern on a <strong>deliberately non-research domain</strong>: the identical
+  ~130-line library, pointed at a shop. Four tools register on <code>document.modelContext</code> (or a local
+  stand-in), every call lands in the ledger, every cart line carries a <code>receipt</code> linking it to the
+  tool call that added it, and <code>checkout</code> is a write an agent must be trusted to run — so its
+  receipts are refused for re-execution and can only be audited. Click a receipt to re-verify a read.</p>
   <div id="mode" class="banner" hidden></div>
   <form id="add-form">
-    <input id="task" type="text" placeholder="Add a task (or let your agent do it)…" />
-    <button type="submit">Add</button>
+    <input name="item" type="text" placeholder="Item (or let your agent shop)…" />
+    <input name="price" type="number" min="0.01" step="0.01" placeholder="$ 0.00" />
+    <button type="submit">Add to cart</button>
   </form>
-  <ul id="list"></ul>
-  <button class="ghost" id="clear">Clear done</button>
+  <ul id="cart"></ul>
+  <p><strong id="total">$0.00</strong></p>
+  <button id="checkout">Checkout</button>
+  <button class="ghost" id="clear">Empty cart</button>
+  <div id="order" class="banner" hidden></div>
   <div id="ledger"></div>
   <script type="module">
     import { defineReceiptedTools, attachLedger } from './receipts.js';
 
-    const KEY = 'receipts.demo.tasks.v1';
+    const KEY = 'receipts.demo.cart.v1';
     const load = () => { try { return JSON.parse(localStorage.getItem(KEY) ?? '[]'); } catch { return []; } };
-    let tasks = load();
+    let cart = load();
     const listeners = new Set();
     const emit = () => {
-      try { localStorage.setItem(KEY, JSON.stringify(tasks)); } catch { /* quota */ }
-      for (const fn of listeners) fn(tasks);
+      try { localStorage.setItem(KEY, JSON.stringify(cart)); } catch { /* quota */ }
+      for (const fn of listeners) fn(cart);
     };
+    const esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    const money = (n) => `$${Number(n ?? 0).toFixed(2)}`;
 
-    const { register, callTool, getCalls, onChange, stamp } = defineReceiptedTools({
-      name: 'todo-demo',
+    const { register, callTool, getCalls, onChange } = defineReceiptedTools({
+      name: 'storefront-demo',
       tools: [
         {
-          name: 'add_task',
-          title: 'Add a task',
-          description: 'Add one task to the shared list. The human sees it immediately.',
-          inputSchema: { type: 'object', properties: { text: { type: 'string', minLength: 1, maxLength: 140 } }, required: ['text'], additionalProperties: false },
-          async execute({ text }) {
+          name: 'add_to_cart',
+          title: 'Add to cart',
+          description: 'Add one item with a unit price to the shared cart. The shopper sees it immediately.',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              item: { type: 'string', minLength: 1, maxLength: 80 },
+              price: { type: 'number', minimum: 0.01, maximum: 100000 },
+            },
+            required: ['item', 'price'],
+            additionalProperties: false,
+          },
+          async execute({ item, price }, { stamp }) {
             const receipt = stamp();
-            tasks = [...tasks, { id: `t_${Date.now().toString(36)}`, text: String(text).slice(0, 140), done: false, receipt }];
+            cart = [...cart, { id: `c_${Date.now().toString(36)}`, item: String(item), price: Number(price), receipt }];
             emit();
-            return { added: text, receipt: receipt.callId };
+            return { added: item, price, cartSize: cart.length, receipt: receipt.callId };
           },
         },
         {
-          name: 'toggle_task',
-          title: 'Complete or reopen a task',
-          description: 'Flip a task between done and not done by matching part of its text.',
-          inputSchema: { type: 'object', properties: { text: { type: 'string' } }, required: ['text'], additionalProperties: false },
-          async execute({ text }) {
-            const t = tasks.find((x) => x.text.toLowerCase().includes(String(text).toLowerCase()));
-            if (!t) throw new Error(`No task matching "${text}"`);
-            const receipt = stamp();
-            t.done = !t.done;
-            t.receipt = receipt;
+          name: 'remove_from_cart',
+          title: 'Remove from cart',
+          description: 'Remove a cart line by matching part of its item name.',
+          inputSchema: { type: 'object', properties: { item: { type: 'string' } }, required: ['item'], additionalProperties: false },
+          async execute({ item }) {
+            const line = cart.find((x) => x.item.toLowerCase().includes(String(item).toLowerCase()));
+            if (!line) throw new Error(`No cart line matching "${item}"`);
+            cart = cart.filter((x) => x.id !== line.id);
             emit();
-            return { task: t.text, done: t.done, receipt: receipt.callId };
+            return { removed: line.item, cartSize: cart.length };
           },
         },
         {
-          name: 'get_tasks',
-          title: 'Read the tasks',
-          description: 'List every task and its state.',
+          name: 'get_cart',
+          title: 'Read the cart',
+          description: 'List every cart line and the running total.',
           inputSchema: { type: 'object', properties: {}, additionalProperties: false },
-          async execute() { return { tasks, count: tasks.length }; },
+          annotations: { readOnlyHint: true },
+          async execute() {
+            return { cart, total: Number(cart.reduce((s, x) => s + x.price, 0).toFixed(2)) };
+          },
+        },
+        {
+          name: 'checkout',
+          title: 'Checkout',
+          description: 'Place the order: empties the cart and returns an order id. Consequential — the agent should confirm with the shopper first.',
+          inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+          async execute(input, { stamp }) {
+            if (!cart.length) throw new Error('Cart is empty');
+            const receipt = stamp();
+            const order = { id: `ord_${Date.now().toString(36)}`, items: cart.length, total: money(cart.reduce((s, x) => s + x.price, 0)), receipt };
+            cart = [];
+            emit();
+            return order;
+          },
         },
       ],
     });
 
-    const list = document.getElementById('list');
+    const list = document.getElementById('cart');
+    const total = document.getElementById('total');
     const render = (items) => {
-      list.innerHTML = '';
-      for (const t of items) {
-        const li = document.createElement('li');
-        li.className = t.done ? 'done' : '';
-        li.innerHTML = `
-          <input type="checkbox" ${t.done ? 'checked' : ''} data-toggle="${t.id}" />
-          <label>${t.text.replace(/&/g, '&amp;').replace(/</g, '&lt;')}</label>
-          ${t.receipt ? `<code data-receipt="${t.receipt.callId}" title="agent action — click to re-verify">receipt</code>` : ''}`;
-        list.appendChild(li);
-      }
+      list.innerHTML = items.map((x) => `
+        <li>
+          <span>${esc(x.item)}</span>
+          ${x.receipt ? `<code data-receipt="${esc(x.receipt.callId)}" title="agent action — click to re-verify">receipt</code>` : ''}
+          <span class="rm" data-rm="${esc(x.id)}" title="Remove">✕</span>
+          <span class="price">${money(x.price)}</span>
+        </li>`).join('');
+      total.textContent = money(items.reduce((s, x) => s + x.price, 0));
     };
     listeners.add(render);
-    render(tasks);
+    render(cart);
 
     document.getElementById('add-form').addEventListener('submit', (e) => {
       e.preventDefault();
-      const input = document.getElementById('task');
-      if (!input.value.trim()) return;
-      tasks = [...tasks, { id: `t_${Date.now().toString(36)}`, text: input.value.trim().slice(0, 140), done: false }];
+      const f = e.target;
+      const item = f.item.value.trim();
+      const price = parseFloat(f.price.value);
+      if (!item || !(price > 0)) return;
+      cart = [...cart, { id: `c_${Date.now().toString(36)}`, item: item.slice(0, 80), price, }];
       emit();
-      input.value = '';
+      f.reset();
     });
-    list.addEventListener('change', (e) => {
-      const id = e.target.dataset.toggle;
-      if (!id) return;
-      const t = tasks.find((x) => x.id === id);
-      if (t) { t.done = !t.done; emit(); }
+    list.addEventListener('click', (e) => {
+      const rm = e.target.dataset?.rm;
+      if (rm) { cart = cart.filter((x) => x.id !== rm); emit(); }
     });
-    document.getElementById('clear').addEventListener('click', () => {
-      tasks = tasks.filter((t) => !t.done);
+    document.getElementById('clear').addEventListener('click', () => { cart = []; emit(); });
+    document.getElementById('checkout').addEventListener('click', () => {
+      if (!cart.length) return;
+      const orderEl = document.getElementById('order');
+      orderEl.hidden = false;
+      orderEl.textContent = `Order placed — ${cart.length} item(s), ${money(cart.reduce((s, x) => s + x.price, 0))}. (Human checkout keeps its own receipt in the ledger only when the agent performs it.)`;
+      cart = [];
       emit();
     });
     list.addEventListener('click', async (e) => {
@@ -151,17 +187,17 @@
       console.info(`[receipts demo] ${r.mode}:`, r.registered, r.errors ?? '');
     });
 
-    attachLedger(document.getElementById('ledger'), { app: 'todo-demo' })
-      .bind({ getCalls, onChange, verifyCall: async (id) => {
+    attachLedger(document.getElementById('ledger'), { app: 'storefront-demo' })
+      .bind({ getCalls, onChange, verifyCall: (id) => {
         const entry = getCalls().find((c) => c.id === id);
-        if (!entry) return { ok: false, note: 'no such call' };
-        try {
-          const result = await callTool(entry.tool, entry.input);
+        if (!entry) return Promise.resolve({ ok: false, note: 'no such call' });
+        if (entry.tool === 'checkout' || entry.tool === 'add_to_cart' || entry.tool === 'remove_from_cart') {
+          return Promise.resolve({ ok: false, note: 'write tool — refusing to re-run; audit its inputs in the ledger instead' });
+        }
+        return callTool(entry.tool, entry.input).then((result) => {
           const after = typeof result === 'string' ? result : JSON.stringify(result)?.slice(0, 140);
           return { ok: true, stable: entry.summary === after, after };
-        } catch (err) {
-          return { ok: false, note: String(err.message ?? err) };
-        }
+        }).catch((err) => ({ ok: false, note: String(err.message ?? err) }));
       } });
   </script>
 </body>

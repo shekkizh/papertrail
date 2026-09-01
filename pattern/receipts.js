@@ -61,26 +61,24 @@ export function defineReceiptedTools({ name = 'app', storageKey = `receipts.${na
     emit();
   }
 
-  // A stamp an execute() can return so the calling app can attach provenance
-  // to the exact object it just wrote.
-  let currentCallId = null;
-  const stamp = () => ({ callId: currentCallId, at: nowIso(), by: 'agent' });
+  // A per-execution receipt factory, injected into execute() via options —
+  // never a global, so parallel tool calls can't stamp each other's receipts.
+  function makeStamp(callId) {
+    return () => ({ callId, at: nowIso(), by: 'agent' });
+  }
 
   const receipted = tools.map((tool) => ({
     ...tool,
     annotations: tool.annotations ?? {},
     execute: async (input, options) => {
       const callId = record(tool.name, input);
-      currentCallId = callId;
       try {
-        const result = await tool.execute(input ?? {}, options ?? {});
+        const result = await tool.execute(input ?? {}, { ...(options ?? {}), stamp: makeStamp(callId) });
         complete(callId, summaryOf(result), true);
         return result;
       } catch (err) {
         complete(callId, String(err?.message ?? err), false);
         throw err;
-      } finally {
-        currentCallId = null;
       }
     },
   }));
@@ -128,11 +126,16 @@ export function defineReceiptedTools({ name = 'app', storageKey = `receipts.${na
     return shim.executeTool(name, JSON.stringify(input ?? {}));
   }
 
-  // Re-verify: re-run a recorded call and compare its outcome summary. Reads
-  // only — auditors can check the chain without mutating app state.
+  // Re-verify: re-run a recorded READ-ONLY call and compare its outcome with
+  // the recorded summary. Write tools are refused — re-running them would
+  // mutate app state, which an auditor must never do.
   async function verifyCall(callId) {
     const entry = calls.find((c) => c.id === callId);
     if (!entry) return { ok: false, note: 'no such call' };
+    const tool = tools.find((t) => t.name === entry.tool);
+    if (!tool?.annotations?.readOnlyHint) {
+      return { ok: false, note: 'write tool — refusing to re-run; audit its inputs in the ledger instead' };
+    }
     const before = entry.summary;
     try {
       const result = await callTool(entry.tool, entry.input);
@@ -146,7 +149,7 @@ export function defineReceiptedTools({ name = 'app', storageKey = `receipts.${na
   function onChange(fn) { listeners.add(fn); return () => listeners.delete(fn); }
   function getCalls() { return calls; }
 
-  return { register, callTool, verifyCall, stamp, getCalls, onChange, mode: native ? 'native' : 'shim' };
+  return { register, callTool, verifyCall, getCalls, onChange, mode: native ? 'native' : 'shim' };
 }
 
 // Minimal ledger UI: a <details> list of every call with a Verify button.
