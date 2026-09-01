@@ -8,7 +8,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import * as store from '../js/state.js';
-import { toolDefs, toolByName, toMarkdown, toBibtex, setCallSource } from '../js/tools.js';
+import { toolDefs, toolByName, toMarkdown, toBibtex, setCallSource, verifySources } from '../js/tools.js';
 
 const TOPIC = 'large language model reasoning';
 
@@ -58,7 +58,9 @@ test('add_papers places cards + per-paper notes with provenance', async () => {
   });
   assert.equal(res.added_to, 'To Read');
   assert.ok(res.papers.every((p) => p.added));
-  assert.deepEqual(res.skipped_notes, ['W0000000000']);
+  assert.deepEqual(res.skipped_notes, [
+    { paper_id: 'W0000000000', reason: 'paper_id not part of this call' },
+  ]);
   const papers = store.getSectionPapers(store.getState().sections[0].id);
   assert.equal(papers.length, 2);
   assert.equal(papers[0].addedBy, 'agent');
@@ -70,7 +72,7 @@ test('add_papers places cards + per-paper notes with provenance', async () => {
   assert.equal(activity[0].tool, 'add_papers');
 });
 
-test('get_paper_details returns abstracts', async () => {
+test('get_paper_details returns abstracts', { timeout: 90000 }, async () => {
   const id = store.allPapers()[0].id;
   const d = await call('get_paper_details', { paper_id: id });
   assert.equal(d.id, id);
@@ -164,10 +166,27 @@ test('get_artifact reads the human-edited canvas; save_artifact revises in place
     sources: read.sources,
   });
   assert.equal(revised.updated_in_place, true);
+  assert.equal(revised.revision_count, 1);
   const after = store.getState().artifacts.find((x) => x.id === art.id);
   assert.match(after.data.markdown, /agent revision/);
   assert.equal(after.revisions.length, 1, 'revision is receipted');
   await assert.rejects(() => call('get_artifact', { artifact_id: 'art_nope' }), /Unknown artifact/);
+  await assert.rejects(() => call('save_artifact', {
+    artifact_id: art.id, kind: 'draft', title: art.title, markdown: 'x',
+  }), /refusing to reinterpret/);
+});
+
+test('verify_sources refetches and reports live grounding', { timeout: 90000 }, async () => {
+  const art = store.getState().artifacts[0];
+  const res = await verifySources(art.sources.slice(0, 2));
+  assert.equal(res.total, res.results.length);
+  for (const r of res.results) {
+    assert.ok(['verified', 'drifted', 'unreachable', 'not_in_workspace'].includes(r.status));
+    if (r.status === 'verified') assert.ok(r.checked_field.includes('OpenAlex'));
+  }
+  const log = store.getState().activity;
+  assert.equal(log[0].tool, 'verify_sources');
+  assert.match(log[0].summary, /verified/);
 });
 
 test('human selection is exposed to agents in workspace state', async () => {
@@ -179,7 +198,7 @@ test('human selection is exposed to agents in workspace state', async () => {
   for (const a of ws.artifacts) assert.match(a.id, /^art_/);
 });
 
-test('get_citation_contexts: verbatim contexts, or graceful degradation', async () => {
+test('get_citation_contexts: verbatim contexts, or graceful degradation', { timeout: 90000 }, async () => {
   const p = store.allPapers()[0];
   const res = await call('get_citation_contexts', { paper_id: p.id, max_citations: 5 });
   assert.equal(res.paper_id, p.id);
@@ -197,7 +216,7 @@ test('get_citation_contexts: verbatim contexts, or graceful degradation', async 
   }
 });
 
-test('suggest_related stages new candidates in the inbox', async () => {
+test('suggest_related stages new candidates in the inbox', { timeout: 90000 }, async () => {
   const before = new Set(store.allPapers().map((p) => p.id));
   const res = await call('suggest_related', { limit: 4 });
   assert.ok(res.seed.id);

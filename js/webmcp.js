@@ -37,6 +37,10 @@ export function activeToolDefs() {
   return isReadOnly() ? toolDefs.filter((t) => SHARE_TOOL_NAMES.has(t.name)) : toolDefs;
 }
 
+export function shareToolCount() {
+  return SHARE_TOOL_NAMES.size;
+}
+
 export function nativeAvailable() {
   return typeof document !== 'undefined' &&
     typeof document.modelContext?.registerTool === 'function';

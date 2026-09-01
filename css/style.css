@@ -328,6 +328,11 @@ body {
 .k-summary { background: var(--panel-dim); color: var(--ink-soft); }
 .artifact-body { font-size: 13px; }
 .artifact-sources { display: flex; flex-wrap: wrap; gap: 5px; align-items: center; margin-top: 10px; border-top: 1px dashed var(--line); padding-top: 9px; }
+.verify-result { display: flex; flex-wrap: wrap; gap: 5px; align-items: center; margin-top: 7px; }
+.verify-chip { font-size: 11px; font-weight: 600; padding: 3px 9px; border-radius: 999px; max-width: 100%; overflow-wrap: anywhere; }
+.v-ok { background: var(--accent-soft); color: var(--accent-ink); }
+.v-drift { background: var(--amber-soft); color: var(--amber); }
+.v-bad { background: var(--err-soft); color: var(--err); }
 
 .md h3, .md h4, .md h5 { font-family: var(--serif); margin: 8px 0 6px; }
 .md h3 { font-size: 15px; } .md h4 { font-size: 14px; } .md h5 { font-size: 13px; }

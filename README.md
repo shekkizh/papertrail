@@ -1,6 +1,6 @@
 # PaperTrail
 
-**A literature-review canvas where your agent works the same board you do — its searches, notes, comparisons, and drafts land as editable objects on your canvas, each with a click-to-audit receipt of the exact tool call that produced it.** It is a reference implementation of the *provenance pattern* for agent-native web apps: expose your state model as typed read/write tools, log every call, and any agent becomes a collaborator while the human stays in control. The same pattern generalizes to any canvas or dashboard app on the web.
+**Your agent writes; another agent audits; receipts arbitrate.** PaperTrail is a literature-review canvas where your agent works the same board you do — its searches, notes, comparisons, and drafts land as editable objects on your canvas, each carrying a click-to-audit receipt of the exact tool call that produced it. Share the workspace and a *second* agent can audit the first one's claims against its receipts — then one click hands the board back to you to fix what the audit flagged. As a pattern, it's a reference implementation of auditable human-agent collaboration for any web app: expose your state model as typed read/write tools, log every call, let receipts arbitrate.
 
 Live app: **https://papertrail-six-weld.vercel.app** *(WebMCP tools register automatically — open it in ChatGPT's browser or Codex, or Chrome with `chrome://flags/#enable-webmcp-testing` enabled)*
 
@@ -14,7 +14,10 @@ call that produced it**.
 Highlights beyond the core loop:
 - **Share links**: encode the whole workspace in the URL — the shared snapshot registers six
   read tools, so *another person's agent* can load, audit, and reason over your review. One
-  click duplicates it into your own browser to make it editable.
+  click duplicates it into your own browser to make it editable. The share link itself *is* an
+  agent-readable artifact — no separate "publish" step needed.
+- **Receipt re-verification**: every artifact's grounded sources can be re-checked against live
+  OpenAlex metadata with one click (⟳ verify) — provenance as evidence, not decoration.
 - **Site tools explorer**: a human-visible panel (⚙ Site tools) listing exactly what any
   WebMCP agent discovers — names, schemas, and trust annotations.
 - **The agent sees what you see**: `get_workspace_state` includes what you currently have
@@ -111,7 +114,7 @@ OpenAlex and Semantic Scholar APIs.
 - `js/tools.js` is DOM-free, so `npm test` (Node's built-in runner) drives the exact tool
   definitions agents see — validation, live OpenAlex calls, provenance chains — plus a stubbed
   Semantic Scholar suite pinning resolve/enrich/contexts/recommendations plumbing and outage
-  degradation: 23 tests total.
+  degradation: 24 tests total.
 - `js/webmcp.js` registers natively when `document.modelContext` exists; otherwise installs a
   spec-shaped local shim (`registerTool`/`getTools`/`executeTool`) so the demo agent, UI, and
   tests exercise identical tool code in any environment.
@@ -123,7 +126,7 @@ OpenAlex and Semantic Scholar APIs.
 ```bash
 python3 -m http.server 8347   # or: npm run serve
 open http://localhost:8347
-npm test                      # 23 end-to-end tests (live OpenAlex + stubbed S2)
+npm test                      # 24 end-to-end tests (live OpenAlex + stubbed S2)
 ```
 
 ## Deploy (Vercel)
@@ -131,19 +134,29 @@ npm test                      # 23 end-to-end tests (live OpenAlex + stubbed S2)
 Static — no build step. `vercel deploy --prod` from the repo root, or import the repo in the
 Vercel dashboard with all defaults.
 
-## Demo video script (≤3 min)
+## Demo video script (≤3 min) — the audit story
 
-1. 0:00 — Live URL in ChatGPT's browser; **Site tools** shows 16 registered tools.
-2. 0:20 — Human seeds two known papers, drags one to *Reading*, renames a section.
-3. 0:40 — Prompt: "find recent work on agent communication failures, add the top 5 to To Read
-   with summary notes" → cards + notes appear live; open one note's *provenance* popover.
-4. 1:20 — Prompt: "compare them across method/benchmarks/findings" → `create_comparison` +
-   `save_artifact` → table artifact renders; human edits one cell's wording.
-5. 1:50 — Prompt: "what's underexplored?" → `identify_gaps` → gap artifact; agent proposes a
-   follow-up `search_literature`.
-6. 2:20 — Prompt: "draft the related-work section" → cited draft artifact; human tweaks a
-   sentence (note the badge flip from *agent* to *you*).
-7. 2:45 — Export → BibTeX; open the **Activity** tab: the full auditable tool-call trail.
+The through-line: **agent A writes, agent B audits, receipts arbitrate.** Deliberately seed one
+agent-written note with a soft overreach so the audit has something to catch.
+
+1. 0:00 — Live URL in ChatGPT's browser; **Site tools** shows 16 registered tools (on screen).
+2. 0:15 — Human seeds two papers they trust; prompt agent A: *"find recent work on agent
+   communication failures, add the best 5 to To Read with summary notes"* → cards + notes land
+   live; open one note's provenance popover.
+3. 0:50 — Agent A also writes a limitation note that slightly overreaches its evidence (seeded).
+4. 1:00 — Human clicks **Share** → open the link on a *second machine/browser*; the Site-tools
+   indicator visibly registers the snapshot's 6 read tools — WebMCP firing on the shared page.
+5. 1:20 — Agent B (Codex or a second ChatGPT session): *"this is a colleague's review — audit
+   it: check the notes against their receipts and the citation contexts"* → it calls
+   `get_workspace_state` + `get_citation_contexts`, flags the overreaching note.
+6. 1:50 — Human clicks **⟳ verify** on an artifact: sources refetched from OpenAlex live,
+   diffs shown. *"The audit is re-runnable, not decorative."*
+7. 2:10 — **Duplicate to my browser** → the host edits the flagged note (badge flips to *you*).
+8. 2:30 — Export BibTeX; show the **Activity** tab: every call, inputs, results. Close:
+   *"A workspace any agent can operate, with receipts — a pattern any web app can reuse."*
+
+Production tips: pre-record agent A's half so model latency doesn't burn the clock; keep the
+share-page tool registration moment in full view; the audit must catch something real.
 
 ## License
 

@@ -2,7 +2,7 @@
 // share links, and the Site-tools explorer.
 
 import * as store from './state.js';
-import { setupWebMCP, webmcp, getRegistryForExplorer, activeToolDefs } from './webmcp.js';
+import { setupWebMCP, webmcp, getRegistryForExplorer, activeToolDefs, shareToolCount } from './webmcp.js';
 import { toolDefs, toMarkdown, toBibtex } from './tools.js';
 import { renderBoard } from './ui/board.js';
 import { renderSearch } from './ui/search.js';
@@ -105,7 +105,7 @@ async function shareWorkspace() {
   history.replaceState(null, '', url);
   try {
     await navigator.clipboard.writeText(url);
-    toast('Share link copied — the snapshot includes 3 read tools for any visiting agent.');
+    toast(`Share link copied — visiting agents get ${shareToolCount()} read-only tools to audit it.`);
   } catch {
     prompt('Share this link (copied link includes the full snapshot):', url);
   }

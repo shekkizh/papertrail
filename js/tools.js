@@ -209,6 +209,7 @@ export const toolDefs = [
       return {
         query,
         result_count: results.length,
+        ordering: 'relevance, best first (OpenAlex default)',
         results: results.map(compact),
         next_step: 'Results are visible in the Inbox. Use add_papers (with per-paper notes where useful) to place them on the workspace.',
       };
@@ -377,10 +378,18 @@ export const toolDefs = [
         }
         out.push({ paper_id: paper.id, title: paper.title, added, section: target.title, note_attached: noteAttached });
       }
+      const outIds = paper_ids;
       return {
         added_to: target.title,
         papers: out,
-        skipped_notes: notes.filter((n) => !paper_ids.includes(n.paper_id)).map((n) => n.paper_id),
+        skipped_notes: notes
+          .filter((n) => !outIds.includes(n.paper_id))
+          .map((n) => ({ paper_id: n.paper_id, reason: 'paper_id not part of this call' }))
+          .concat(
+            notes
+              .filter((n) => outIds.includes(n.paper_id) && !out.find((o) => o.paper_id === n.paper_id && o.note_attached))
+              .map((n) => ({ paper_id: n.paper_id, reason: 'paper was already in the workspace; use annotate_paper instead' })),
+          ),
         visible_to_human: true,
       };
     },
@@ -462,23 +471,23 @@ export const toolDefs = [
           description: 'Suggested axes, e.g. ["method","benchmarks","key finding","limitations"]. You choose the final axes.',
         },
       },
-    required: ['paper_ids'],
-    additionalProperties: false,
-  },
-  annotations: { readOnlyHint: true, untrustedContentHint: true },
-  async execute({ paper_ids, dimensions = null }) {
-    const papers = paper_ids.map((id) => {
-      const p = store.getPaper(id) ?? store.getState().inbox.find((x) => x.id === id);
-      if (!p) fail(`Paper ${id} not found in workspace or inbox.`);
-      return p;
-    });
-    return {
-      suggested_dimensions: dimensions,
-      papers: papers.map((p) => paperMaterial(p, { abstractChars: 900 })),
-      next_step: 'You write the comparison — this tool only gathers the material. Analyze it, then publish the table as markdown with save_artifact (kind: "comparison").',
-    };
-  },
-}),
+      required: ['paper_ids'],
+      additionalProperties: false,
+    },
+    annotations: { readOnlyHint: true, untrustedContentHint: true },
+    async execute({ paper_ids, dimensions = null }) {
+      const papers = paper_ids.map((id) => {
+        const p = store.getPaper(id) ?? store.getState().inbox.find((x) => x.id === id);
+        if (!p) fail(`Paper ${id} not found in workspace or inbox.`);
+        return p;
+      });
+      return {
+        suggested_dimensions: dimensions,
+        papers: papers.map((p) => paperMaterial(p, { abstractChars: 900 })),
+        next_step: 'You write the comparison — this tool only gathers the material. Analyze it, then publish the table as markdown with save_artifact (kind: "comparison"). For more than 6 papers, make multiple calls (e.g. grouped by theme) and merge them in your table.',
+      };
+    },
+  }),
 
   tool({
     name: 'find_connections',
@@ -493,17 +502,20 @@ export const toolDefs = [
     },
     annotations: { readOnlyHint: true },
     async execute({ paper_ids = null }, { signal } = {}) {
+      const all = store.allPapers();
       let papers = paper_ids
         ? paper_ids.map((id) => {
             const p = store.getPaper(id);
             if (!p) fail(`Paper ${id} is not in the workspace.`);
             return p;
           })
-        : store.allPapers().slice(0, 12);
+        : all.slice(0, 12);
       if (papers.length < 2) fail('Need at least 2 papers (add some first).');
       const connections = await oa.findConnections(papers.map((p) => ({ ...p })), { signal });
       return {
         analyzed: papers.length,
+        total_available: paper_ids ? papers.length : all.length,
+        truncated: !paper_ids && all.length > 12,
         connections,
         next_step: 'Summarize the structure you see (clusters, bridges, isolates) for the human, or publish with save_artifact.',
       };
@@ -587,6 +599,10 @@ export const toolDefs = [
     async execute({ artifact_id = null, kind, title, markdown, sources = [] }, { callId } = {}) {
       const validSources = sources.filter((id) => store.getPaper(id));
       if (artifact_id) {
+        const existing = store.getState().artifacts.find((a) => a.id === artifact_id);
+        if (existing && existing.kind !== kind) {
+          fail(`Artifact ${artifact_id} is a "${existing.kind}"; refusing to reinterpret it as "${kind}". Omit artifact_id to publish a new artifact instead.`);
+        }
         const updated = store.updateArtifact(artifact_id, {
           title,
           markdown,
@@ -597,6 +613,7 @@ export const toolDefs = [
         return {
           artifact_id: updated.id,
           updated_in_place: true,
+          revision_count: (updated.revisions ?? []).length,
           visible_to_human: true,
           sources_count: validSources.length,
           ignored_unknown_sources: sources.length - validSources.length,
@@ -624,7 +641,7 @@ export const toolDefs = [
     description:
       'Given a seed paper (default: most recently added), suggest related work — Semantic Scholar ' +
       'recommendations when available, OpenAlex relatedness + citations otherwise — excluding anything ' +
-      'already in the workspace. Suggestions are staged in the Inbox.',
+      'already in the workspace. Suggestions are staged in the Inbox (a new staging replaces the previous one).',
     inputSchema: {
       type: 'object',
       properties: { paper_id: { type: 'string' }, limit: { type: 'integer', minimum: 1, maximum: 10 } },
@@ -695,4 +712,40 @@ export const toolDefs = [
 
 export function toolByName(name) {
   return toolDefs.find((t) => t.name === name) ?? null;
+}
+
+// ---------- receipt re-verification (human-facing) ----------
+// Provenance-as-evidence: refetch every source of an artifact from OpenAlex and
+// report whether the stored workspace data still matches live metadata. Logged
+// in the activity trail like any tool call.
+
+export async function verifySources(sourceIds, { signal } = {}) {
+  const callId = store.recordCall('verify_sources', { sources: sourceIds }, 'human');
+  const results = [];
+  for (const id of sourceIds) {
+    const stored = store.getPaper(id);
+    if (!stored) {
+      results.push({ paper_id: id, status: 'not_in_workspace' });
+      continue;
+    }
+    try {
+      const live = await oa.getWork(id, signal);
+      const drift = {};
+      if (live.title !== stored.title) drift.title = { stored: stored.title, live: live.title };
+      if (live.year !== stored.year) drift.year = { stored: stored.year, live: live.year };
+      if (live.venue !== stored.venue) drift.venue = { stored: stored.venue, live: live.venue };
+      results.push({
+        paper_id: id,
+        status: Object.keys(drift).length ? 'drifted' : 'verified',
+        drift,
+        cited_by_now: live.citedBy,
+        checked_field: 'title, year, venue vs live OpenAlex',
+      });
+    } catch {
+      results.push({ paper_id: id, status: 'unreachable' });
+    }
+  }
+  const verified = results.filter((r) => r.status === 'verified').length;
+  store.completeCall(callId, `${verified}/${results.length} sources verified live`, true);
+  return { verified, total: results.length, results, checked_at: new Date().toISOString() };
 }

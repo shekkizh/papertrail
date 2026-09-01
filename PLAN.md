@@ -1,8 +1,8 @@
 # PaperTrail — Project Plan
 
-**One-liner.** A literature-review canvas where a researcher and their AI agent work the same
-workspace at the same time: the human curates and judges, the agent searches, extracts,
-compares, and drafts — through structured WebMCP tools instead of blind UI guessing.
+**One-liner.** A literature-review canvas your agent operates through WebMCP tools while you
+watch the same board — and a share link that lets a *second* agent audit the first one's work
+against receipts. Agent A writes, agent B audits, receipts arbitrate.
 
 **Why this wins on the criteria**
 
@@ -48,8 +48,10 @@ Write: `add_papers` (with per-paper notes), `move_papers`, `remove_papers`, `ann
   Cross-session, cross-agent collaboration with zero backend.
 - *Site tools explorer*: in-app panel showing the live tool registry (names, schemas,
   annotations) — WebMCP made visible to human visitors.
-- *Provenance receipts*: every agent note/artifact links to the exact tool call; planned:
-  re-verification (refetch the source and diff stored vs live data).
+- *Provenance receipts*: every agent note/artifact links to the exact tool call; ⟳ verify
+  refetches every artifact source from live OpenAlex and diffs stored vs live metadata.
+- *Future work (documented, not shipped)*: revision chains for shared snapshots (a duplicated
+  snapshot remembers its parent; re-sharing emits v2 with a diff).
 
 **Architecture**
 
@@ -68,7 +70,7 @@ Deployment: Vercel (static, no build; origin-isolated HTTPS satisfies the WebMCP
 model). Why static and not a backend: the user's agent is the only LLM in the loop — a server
 would duplicate it; the workspace never leaves the browser; a judge's first visit can't hit a
 cold start or an auth wall. The one real client-side gap (full-text reading) is partially
-closed with CORS-open Semantic Scholar enrichment instead. Testing: `npm test` (21 tests —
+closed with CORS-open Semantic Scholar enrichment instead. Testing: `npm test` (24 tests —
 tools + live OpenAlex + stubbed Semantic Scholar) plus the in-page demo agent as an
 end-to-end harness.
 

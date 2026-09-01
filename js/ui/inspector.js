@@ -2,6 +2,7 @@
 // and the Activity log — the full audit trail of every agent tool call.
 
 import * as store from '../state.js';
+import { verifySources } from '../tools.js';
 import { getSelection, select, setTab } from './selection.js';
 import { renderMarkdown } from './markdown.js';
 
@@ -195,9 +196,36 @@ function artifactView(a) {
           const p = store.getPaper(id);
           return p ? `<button class="chip chip-link" data-goto="${id}" title="${esc(p.title)}">${esc(p.title.slice(0, 40))}…</button>` : '';
         }).join('')}
-      </div>` : ''}`;
+        <button class="btn btn-ghost btn-xs" data-verify="${a.id}" title="Refetch every source from OpenAlex and compare with stored metadata">⟳ verify</button>
+      </div>
+      <div class="verify-result" data-verify-result="${a.id}"></div>` : ''}`;
   div.querySelector('[data-del-art]')?.addEventListener('click', () => store.deleteArtifact(a.id));
   div.querySelector('[data-goto]')?.addEventListener('click', (e) => select(e.target.dataset.goto));
+  div.querySelector('[data-verify]')?.addEventListener('click', async (e) => {
+    const btn = e.target;
+    const out = div.querySelector(`[data-verify-result="${a.id}"]`);
+    btn.disabled = true;
+    btn.textContent = '⟳ verifying…';
+    try {
+      const res = await verifySources(a.sources);
+      out.innerHTML = res.results.map((r) => {
+        const p = store.getPaper(r.paper_id);
+        const label = esc((p?.title ?? r.paper_id).slice(0, 36));
+        if (r.status === 'verified') return `<span class="verify-chip v-ok" title="Title, year, venue match live OpenAlex">✓ ${label}</span>`;
+        if (r.status === 'drifted') {
+          const fields = Object.entries(r.drift).map(([f, d]) => `${f}: “${esc(String(d.stored).slice(0, 24))}” → “${esc(String(d.live).slice(0, 24))}”`).join('; ');
+          return `<span class="verify-chip v-drift" title="${fields}">~ ${label} — ${fields}${r.cited_by_now != null ? ` · ${r.cited_by_now} cites now` : ''}</span>`;
+        }
+        return `<span class="verify-chip v-bad" title="${r.status}">✕ ${label} — ${r.status}</span>`;
+      }).join('') + `<span class="hint tiny">${res.verified}/${res.total} verified live · ${res.checked_at.slice(11, 19)} UTC</span>`;
+      btn.textContent = '⟳ verify';
+      btn.disabled = false;
+    } catch (err) {
+      out.innerHTML = `<span class="verify-chip v-bad">✕ verification failed: ${esc(String(err.message ?? err))}</span>`;
+      btn.textContent = '⟳ verify';
+      btn.disabled = false;
+    }
+  });
   return div;
 }
 
