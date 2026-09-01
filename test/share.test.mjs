@@ -18,7 +18,7 @@ const hostileSnapshot = {
   ],
   papers: {
     W111: {
-      id: 'W111', title: 'Paper', authors: ['A'], year: 2024, venue: null,
+      id: 'W111', title: 'Paper', authors: ['A'], year: `2020${EVIL}`, venue: null,
       citedBy: 1, primaryTopic: null, topics: [], abstract: 'ok',
       sectionId: `sec_${EVIL}`, // unknown → remapped to first section
       notes: [
@@ -36,7 +36,7 @@ const hostileSnapshot = {
     revisions: [{ callId: EVIL, ts: 'not-a-number' }, EVIL],
   }],
   activity: [
-    { id: `call_${EVIL}`, ts: 'bad', tool: EVIL, input: EVIL, source: EVIL, summary: EVIL, ok: 'yes' },
+    { id: `call_${EVIL}`, ts: 'bad', tool: `t">${EVIL}`, input: EVIL, source: EVIL, summary: EVIL, ok: 'yes' },
     null,
   ],
 };
@@ -91,6 +91,13 @@ test('migrate rebuilds hostile snapshots through strict allowlists', () => {
     ...s.activity.map((c) => c.id),
   ];
   for (const v of idFields) assert.ok(!v.includes('<') && !v.includes('"') && !v.includes(' '), `unsafe id: ${v}`);
+
+  // hostile tool names are stripped to the tool-name charset, years coerced
+  for (const c of s.activity) assert.match(c.tool, /^[a-z0-9_]*$/i);
+  for (const p of Object.values(s.papers)) {
+    assert.ok(p.year === null || Number.isFinite(p.year), `unsafe year: ${p.year}`);
+    assert.ok(p.citedBy === null || Number.isFinite(p.citedBy));
+  }
 });
 
 test('round-trip: legit workspaces survive migrate unchanged in shape', () => {

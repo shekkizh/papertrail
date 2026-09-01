@@ -40,7 +40,7 @@ function sanitizePaper(p) {
     authors: Array.isArray(p.authors) ? p.authors.filter((a) => typeof a === 'string') : [],
     notes: Array.isArray(p.notes) ? p.notes : [],
     citedBy: Number.isFinite(p.citedBy) ? p.citedBy : 0,
-    year: p.year ?? null,
+    year: Number.isFinite(p.year) ? p.year : null, // rendered un-escaped as text — coerce
   };
 }
 
@@ -126,7 +126,7 @@ function migrate(s) {
     .map((c) => ({
       id: SAFE_ID('call_').test(String(c.id)) ? String(c.id) : uid('call'),
       ts: Number.isFinite(c.ts) ? c.ts : Date.now(),
-      tool: String(c.tool).slice(0, 60),
+      tool: c.tool.replace(/[^a-z0-9_]/gi, '').slice(0, 60), // interpolated into attributes
       input: c.input && typeof c.input === 'object' ? c.input : {},
       source: ['browser-agent', 'demo-agent', 'human'].includes(c.source) ? c.source : 'browser-agent',
       summary: typeof c.summary === 'string' ? c.summary.slice(0, 300) : null,
@@ -160,11 +160,14 @@ export function init({ reset = false, fromSnapshot = null } = {}) {
 // tab, so each window re-reads and re-renders on the other's writes —
 // human drags and agent tool calls appear on both boards in real time,
 // with no backend. Returns an unwire function.
+let lastRemoteSnapshot = null; // guard against cross-tab persist echo
+
 export function wireCrossTabSync() {
   if (typeof window === 'undefined' || !hasLocalStorage) return () => {};
   const handler = (e) => {
     if (e.key !== STORAGE_KEY || !e.newValue) return;
     try {
+      lastRemoteSnapshot = e.newValue;
       state = migrate(JSON.parse(e.newValue));
       emit();
     } catch { /* ignore malformed cross-tab writes */ }
@@ -189,6 +192,14 @@ export function emit() {
 function persistNow() {
   clearTimeout(persistTimer);
   persistTimer = null;
+  // a re-persist of a state we just received from another tab would echo
+  // between windows instead of converging — skip when content is identical
+  if (lastRemoteSnapshot !== null) {
+    try {
+      if (JSON.stringify(state) === lastRemoteSnapshot) { lastRemoteSnapshot = null; return; }
+    } catch { /* fall through and persist */ }
+    lastRemoteSnapshot = null;
+  }
   try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); } catch { /* quota */ }
 }
 

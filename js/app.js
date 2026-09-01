@@ -11,6 +11,7 @@ import { openDemo } from './ui/demoagent.js';
 import { onSelect, getSelection, setTab } from './ui/selection.js';
 
 const $ = (id) => document.getElementById(id);
+let panelSkipped = false; // a render skipped a focused panel — repaint on focusout
 
 function download(name, content, type) {
   const a = document.createElement('a');
@@ -43,8 +44,12 @@ function renderPulse(state) {
     <span class="pulse-label">live trail</span>` +
     state.activity.slice(0, 48).map((c) =>
       `<button class="pulse-dot p-${c.source} ${c.ok === false ? 'p-fail' : ''}"
-        title="${c.tool} · ${c.source === 'demo-agent' ? 'demo agent' : c.source} · ${timeAgo(c.ts)}${c.ok === false ? ' (failed)' : ''}"
-        aria-label="${c.tool}"></button>`).join('');
+        title="${esc(c.tool)} · ${c.source === 'demo-agent' ? 'demo agent' : c.source} · ${timeAgo(c.ts)}${c.ok === false ? ' (failed)' : ''}"
+        aria-label="${esc(c.tool)}"></button>`).join('');
+}
+
+function esc(s) {
+  return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
 function renderBanner(status) {
@@ -207,9 +212,13 @@ async function boot() {
     // activity never destroys a half-typed note or rename.
     const active = document.activeElement;
     const holdsFocus = (el) => el.contains(active) && isEditable(active);
-    if (!holdsFocus(board)) renderBoard(board, state);
-    if (!holdsFocus(searchRail)) renderSearch(searchRail, state);
-    if (!holdsFocus(inspector)) renderInspectorSafe(inspector, state);
+    const boardSkip = holdsFocus(board);
+    const searchSkip = holdsFocus(searchRail);
+    const inspSkip = holdsFocus(inspector);
+    if (!boardSkip) renderBoard(board, state);
+    if (!searchSkip) renderSearch(searchRail, state);
+    if (!inspSkip) renderInspectorSafe(inspector, state);
+    panelSkipped = boardSkip || searchSkip || inspSkip;
     renderHeader(state);
     renderPulse(state);
   };
@@ -220,14 +229,17 @@ async function boot() {
   });
   render(store.getState());
 
-  // When focus leaves a panel that was skipped mid-edit, repaint it once —
-  // deferred past any in-flight click so the panel can't strand stale content.
+  // If a burst of agent writes landed while the human was focused in a panel,
+  // that panel was skipped — repaint it once focus leaves (deferred past any
+  // in-flight click, and only when something was actually skipped).
   let lastPointerDown = 0;
   window.addEventListener('pointerdown', () => { lastPointerDown = Date.now(); });
   document.addEventListener('focusout', () => {
+    if (!panelSkipped) return;
     setTimeout(() => {
       if (Date.now() - lastPointerDown < 300) return; // a click is in flight
       if (isEditable(document.activeElement)) return; // focus moved elsewhere
+      panelSkipped = false;
       render(store.getState());
     }, 150);
   });

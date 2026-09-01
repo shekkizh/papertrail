@@ -157,22 +157,23 @@ export function attachLedger(el, { app = 'app' } = {}) {
   if (!el) return null;
   el.innerHTML = '<p class="receipts-hint">No tool calls yet.</p>';
   let api = null;
+  const esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
   const render = (calls) => {
     if (!calls.length) return;
     el.innerHTML = calls
       .slice()
       .reverse()
       .map((c) => `
-        <div class="receipt" data-call="${c.id}">
+        <div class="receipt" data-call="${esc(c.id)}">
           <div class="receipt-head">
-            <code>${c.tool}</code>
+            <code>${esc(c.tool)}</code>
             <span class="receipt-ok ${c.ok === false ? 'bad' : 'good'}">${c.ok === false ? 'failed' : 'ok'}</span>
-            <time>${new Date(c.ts).toLocaleTimeString()}</time>
+            <time>${esc(new Date(c.ts).toLocaleTimeString())}</time>
           </div>
-          <pre>${String(JSON.stringify(c.input, null, 1)).slice(0, 300)}</pre>
-          ${c.summary ? `<div class="receipt-sum">${String(c.summary).slice(0, 160)}</div>` : ''}
-          <button class="receipt-verify" data-verify="${c.id}">⟳ re-verify</button>
-          <span class="receipt-result" data-result="${c.id}"></span>
+          <pre>${esc(String(JSON.stringify(c.input, null, 1)).slice(0, 300))}</pre>
+          ${c.summary ? `<div class="receipt-sum">${esc(String(c.summary).slice(0, 160))}</div>` : ''}
+          <button class="receipt-verify" data-verify="${esc(c.id)}">⟳ re-verify</button>
+          <span class="receipt-result" data-result="${esc(c.id)}"></span>
         </div>`)
       .join('');
   };
