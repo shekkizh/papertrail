@@ -159,7 +159,7 @@ async function bootLive() {
   const liveId = new URLSearchParams(location.search).get('live');
   if (!liveId || !/^[a-z0-9]{6,20}$/.test(liveId)) return null;
   const { seq } = await sync.joinLive(liveId);
-  sync.currentId = liveId;
+  sync.setCurrentId(liveId);
   sync.startSync(liveId, renderLiveStatus);
   $('live-btn').hidden = true;
   $('reset-btn').hidden = true;

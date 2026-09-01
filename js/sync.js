@@ -7,8 +7,23 @@ import * as store from './state.js';
 
 const API = '/api/sync';
 
-const actor = `w-${Math.random().toString(36).slice(2, 8)}${Date.now().toString(36).slice(-4)}`;
+// stable per-tab actor id — survives reloads so presence counts stay honest
+const actor = (() => {
+  try {
+    const existing = sessionStorage.getItem('papertrail.actor');
+    if (existing) return existing;
+    const fresh = `w-${Math.random().toString(36).slice(2, 8)}${Date.now().toString(36).slice(-4)}`;
+    sessionStorage.setItem('papertrail.actor', fresh);
+    return fresh;
+  } catch {
+    return `w-${Math.random().toString(36).slice(2, 8)}${Date.now().toString(36).slice(-4)}`;
+  }
+})();
 store.setClientId(actor);
+
+// The live workspace this tab participates in (null = local-only).
+export let currentId = null;
+export function setCurrentId(id) { currentId = id; }
 
 async function api(action, body, method = 'POST') {
   const url = action === 'join' ? `${API}?action=join&id=${encodeURIComponent(body.id)}` : `${API}?action=${action}`;
