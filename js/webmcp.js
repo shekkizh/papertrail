@@ -102,15 +102,37 @@ function installShim() {
   document.modelContext = shim;
 }
 
+// Builds diverge on executeTool's input form: Chrome's docs specify a JSON
+// string; Codex (newer spec draft) requires a parsed object. Try the object
+// form first; fall back to the string form only when the build rejects the
+// input itself (validation happens before execution, so a write tool can
+// never run twice). Results are parsed defensively either way.
+async function executeNativeTool(tool, input) {
+  const obj = input ?? {};
+  try {
+    return await document.modelContext.executeTool(tool, obj);
+  } catch (err) {
+    const msg = String(err?.message ?? err);
+    if (!/requires an object|object input|must be an object|json string/i.test(msg)) throw err;
+    return await document.modelContext.executeTool(tool, JSON.stringify(obj));
+  }
+}
+
+function parseToolResult(raw) {
+  if (raw == null) return null;
+  if (typeof raw !== 'string') return raw; // already parsed by this build
+  try { return JSON.parse(raw); } catch { return raw; }
+}
+
 export function callTool(name, input) {
   if (webmcp.mode === 'native') {
     // Route through the browser's own dispatch so the demo agent exercises the
-    // exact path an external agent uses (including serialization).
+    // exact path an external agent uses (including serialization differences).
     return (async () => {
       const tools = await document.modelContext.getTools();
       const tool = tools.find((t) => t.name === name);
       if (!tool) throw new Error(`Tool ${name} not registered`);
-      return JSON.parse(await document.modelContext.executeTool(tool, JSON.stringify(input ?? {})));
+      return parseToolResult(await executeNativeTool(tool, input ?? {}));
     })();
   }
   const def = shimRegistry.get(name);
