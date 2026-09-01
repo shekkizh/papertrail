@@ -89,6 +89,12 @@ export default async function handler(req, res) {
         ops: remote.map((r) => ({ seq: Number(r.seq), kind: r.kind, payload: r.payload, actor: r.actor, ts: Number(r.ts) })),
         seq: Math.max(maxSent, ...(remote.length ? remote.map((r) => Number(r.seq)) : [since])),
         peers,
+        debug: {
+          bodyOpsType: typeof body?.ops,
+          bodyOpsLen: Array.isArray(body?.ops) ? body.ops.length : null,
+          firstOp: body?.ops?.[0] ?? null,
+          validCount: Array.isArray(body?.ops) ? body.ops.filter(validOp).length : null,
+        },
       });
     }
 
