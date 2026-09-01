@@ -186,12 +186,15 @@ async function shareWorkspace() {
     qr.make();
     let imageDataUrl = null;
     try { imageDataUrl = qr.createDataURL(6, 8); } catch { /* QR is garnish */ }
+    let copied = true;
     try {
       await navigator.clipboard.writeText(url);
-      toast('Live link copied — scan to join from any device. Every human edit and agent tool call replicates with its receipt.', { imageDataUrl });
     } catch {
-      prompt('Live link:', url);
+      copied = false; // the link is in the address bar regardless — always show the QR
     }
+    toast(copied
+      ? 'Live link copied — scan to join from any device. Every human edit and agent tool call replicates with its receipt.'
+      : 'Live link is in your address bar — scan to join from any device.', { imageDataUrl });
     return;
   }
   const encoded = await store.encodeWorkspace();
