@@ -103,3 +103,19 @@ test('assembly history: captures local and remote ops for replay', () => {
   assert.ok(s.opsHistory.length >= afterLocal + 2);
   assert.equal(store.getPaper('W777000001')?.title, 'Remote addition');
 });
+
+test('cross-tab sync: foreign workspaces never clobber local state', async () => {
+  store.init({ reset: true });
+  store.setTitle('Mine');
+  // another tab persists a DIFFERENT workspace to shared storage
+  const foreign = JSON.stringify({ wuid: 'ws_foreign123', title: 'Theirs', sections: [], papers: {}, inbox: [], artifacts: [], activity: [] });
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new StorageEvent('storage', { key: 'papertrail.workspace.v1', newValue: foreign }));
+    assert.equal(store.getState().title, 'Mine', 'foreign wuid ignored');
+    const mine = JSON.stringify({ ...JSON.parse(JSON.stringify(store.getState())) });
+    // same wuid → applies
+    const same = JSON.stringify({ ...JSON.parse(foreign), wuid: store.getState().wuid, title: 'Theirs same id' });
+    window.dispatchEvent(new StorageEvent('storage', { key: 'papertrail.workspace.v1', newValue: same }));
+    assert.equal(store.getState().title, 'Theirs same id', 'same wuid applies');
+  }
+});

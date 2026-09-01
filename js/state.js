@@ -16,6 +16,7 @@ export function uid(prefix) {
 
 function defaultState() {
   return {
+    wuid: uid('ws'),     // workspace identity — cross-tab sync only applies to matches
     title: 'Untitled survey',
     sections: [
       { id: 'sec_toread', title: 'To Read' },
@@ -136,6 +137,7 @@ function migrate(s) {
   merged.opsHistory = (Array.isArray(merged.opsHistory) ? merged.opsHistory : [])
     .filter((o) => o && typeof o === 'object' && typeof o.kind === 'string' && o.payload)
     .slice(-250);
+  if (typeof merged.wuid !== 'string' || !merged.wuid) merged.wuid = uid('ws');
   merged.title = String(merged.title ?? d.title).slice(0, 120);
   merged.lastQuery = typeof merged.lastQuery === 'string' ? merged.lastQuery.slice(0, 200) : null;
   return merged;
@@ -175,8 +177,12 @@ export function wireCrossTabSync() {
   const handler = (e) => {
     if (e.key !== STORAGE_KEY || !e.newValue) return;
     try {
+      const incoming = JSON.parse(e.newValue);
+      // another tab working a DIFFERENT workspace (stale live tab, fresh local
+      // session) must never clobber this one — identity guard
+      if (!incoming?.wuid || incoming.wuid !== state?.wuid) return;
       lastRemoteSnapshot = e.newValue;
-      state = migrate(JSON.parse(e.newValue));
+      state = migrate(incoming);
       emit();
     } catch { /* ignore malformed cross-tab writes */ }
   };
