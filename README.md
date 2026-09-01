@@ -2,11 +2,11 @@
 
 **A literature-review canvas where you and your AI agent work the same workspace, at the same time.**
 
-Live app: **https://shekkizh.github.io/papertrail/** *(WebMCP tools register automatically — open it in ChatGPT's browser, or Chrome with `chrome://flags/#enable-webmcp-testing` enabled)*
+Live app: **https://papertrail-six-weld.vercel.app** *(WebMCP tools register automatically — open it in ChatGPT's browser, or Chrome with `chrome://flags/#enable-webmcp-testing` enabled)*
 
 PaperTrail is a survey-planning board for researchers: sections of paper cards, structured
 notes, comparison tables, gap analyses, drafted related-work sections. What makes it new is
-that the app registers **14 structured tools on `document.modelContext`**, so your agent
+that the app registers **15 structured tools on `document.modelContext`**, so your agent
 doesn't click through the UI blind — it reads and writes the app's real data model, with every
 action materializing on your canvas instantly and every agent-written object carrying
 **provenance back to the exact tool call that produced it**.
@@ -41,18 +41,23 @@ the other's half before.
 
 ## The tool surface
 
-Registered in the top-level document via `document.modelContext.registerTool(tool, { signal })`:
+Registered in the top-level document via `document.modelContext.registerTool(tool, { signal })`.
+Data comes from two keyless, CORS-open scholarly APIs: **OpenAlex** (the workspace's source of
+record) and **Semantic Scholar** (an optional enrichment layer: TLDRs, citation contexts,
+recommendations). Every S2 call degrades gracefully under rate limits — tools answer from
+OpenAlex and say so — so the app never hard-fails in a demo.
 
 | Tool | Kind | What it does |
 | --- | --- | --- |
 | `search_literature` | read | Search OpenAlex (250M+ works); results stage in the shared Inbox |
-| `get_paper_details` | read | Full record: abstract, topics, venue, citations, existing notes |
+| `get_paper_details` | read | Full record: abstract, topics, venue, citations + S2 TLDR & open-access PDF |
 | `get_workspace_state` | read | The agent sees the same canvas the human sees |
+| `get_citation_contexts` | read | Verbatim sentences other papers use to cite this one, with intents |
 | `find_connections` | read | Deterministic citation-graph analysis: shared refs/authors/topics |
 | `identify_gaps` | read | Statistical gap hypotheses from topic co-occurrence sparsity |
 | `create_comparison` | read | Gathers grounded material for the agent to build a comparison |
 | `draft_related_work` | read | Gathers cited material + citation-style contract for drafting |
-| `suggest_related` | read | Related work via OpenAlex relatedness + citations, minus what you have |
+| `suggest_related` | read | S2 recommendations, falling back to OpenAlex relatedness |
 | `export_workspace` | read | Markdown survey skeleton / BibTeX / JSON |
 | `add_papers` | write | Place cards on the canvas (instantly visible to the human) |
 | `move_papers` | write | Move cards between sections |
@@ -60,6 +65,8 @@ Registered in the top-level document via `document.modelContext.registerTool(too
 | `annotate_paper` | write | Structured notes (summary/method/finding/limitation/connection/question) |
 | `save_artifact` | write | Publish agent-authored tables/drafts as editable canvas artifacts |
 
+`get_citation_contexts` is the flagship read: for related-work writing, "what claim of this
+paper actually travels in the literature" is exactly the evidence an LLM normally lacks.
 Read tools declare `annotations: { readOnlyHint: true }`; write tools are deliberately few and
 concrete, so confirmation prompts stay meaningful. All schemas use closed
 `additionalProperties`, enums, and length bounds.
@@ -82,10 +89,14 @@ Your workspace persists in `localStorage`. Nothing leaves your browser except Op
 
 ## Implementation notes
 
-- Zero dependencies, no build step: vanilla ES modules + OpenAlex REST (CORS-enabled, keyless).
-  Static hosting keeps the whole tool surface client-side and auditable.
+- Zero dependencies, no build step: vanilla ES modules over two keyless CORS-open APIs
+  (OpenAlex + Semantic Scholar). Deliberately serverless — the user's agent is the only LLM in
+  the loop, the workspace never leaves the browser, and a judge's first visit can never hit a
+  cold start. See PLAN.md for the full static-vs-backend rationale.
 - `js/tools.js` is DOM-free, so `npm test` (Node's built-in runner) drives the exact tool
-  definitions agents see — validation, live OpenAlex calls, provenance chains — in 16 tests.
+  definitions agents see — validation, live OpenAlex calls, provenance chains — plus a stubbed
+  Semantic Scholar suite pinning resolve/enrich/contexts/recommendations plumbing and outage
+  degradation: 21 tests total.
 - `js/webmcp.js` registers natively when `document.modelContext` exists; otherwise installs a
   spec-shaped local shim (`registerTool`/`getTools`/`executeTool`) so the demo agent, UI, and
   tests exercise identical tool code in any environment.
@@ -97,12 +108,17 @@ Your workspace persists in `localStorage`. Nothing leaves your browser except Op
 ```bash
 python3 -m http.server 8347   # or: npm run serve
 open http://localhost:8347
-npm test                      # 16 end-to-end tests against live OpenAlex
+npm test                      # 21 end-to-end tests (live OpenAlex + stubbed S2)
 ```
+
+## Deploy (Vercel)
+
+Static — no build step. `vercel deploy --prod` from the repo root, or import the repo in the
+Vercel dashboard with all defaults.
 
 ## Demo video script (≤3 min)
 
-1. 0:00 — Live URL in ChatGPT's browser; **Site tools** shows 14 registered tools.
+1. 0:00 — Live URL in ChatGPT's browser; **Site tools** shows 15 registered tools.
 2. 0:20 — Human seeds two known papers, drags one to *Reading*, renames a section.
 3. 0:40 — Prompt: "find recent work on agent communication failures, add the top 5 to To Read
    with summary notes" → cards + notes appear live; open one note's *provenance* popover.

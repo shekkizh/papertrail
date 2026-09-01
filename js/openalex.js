@@ -83,6 +83,18 @@ export async function hydrateWorks(ids, signal) {
   return data.results.map(trimWork);
 }
 
+// Canonical OpenAlex records for external DOI hints (e.g. from Semantic
+// Scholar recommendations). Missing DOIs simply drop out of the result.
+export async function hydrateByDois(dois, signal) {
+  const clean = [...new Set(dois.filter(Boolean).map((d) => String(d).toLowerCase()))].slice(0, 25);
+  if (!clean.length) return [];
+  const data = await getJSON(
+    `/works?filter=doi:${clean.map((d) => `https://doi.org/${d}`).join('|')}&select=${DETAIL_SELECT}&per-page=${clean.length}`,
+    signal,
+  );
+  return data.results.map(trimWork);
+}
+
 // Related work for a seed: its OpenAlex `related_works`, topped up with recent
 // works that cite it when relations are sparse (common for brand-new papers).
 export async function suggestRelated(seedId, { limit = 6, excludeIds = [], signal } = {}) {

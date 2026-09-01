@@ -86,7 +86,7 @@ function connectionsMarkdown(connections) {
   ].join('\n');
 }
 
-function draftMarkdown(topic, material) {
+function draftMarkdown(topic, material, citationIntel) {
   const papers = material.papers;
   const intro = `Work on ${topic} has developed along several complementary lines. The papers collected here trace those lines from shared foundations to diverging emphases.`;
   const bodies = papers.map((p) => {
@@ -96,16 +96,26 @@ function draftMarkdown(topic, material) {
     return `${key} ${clip(focus, 200)}${noteLine} [${p.paper_id}]`;
   });
   const closer = `Taken together, these works suggest the open questions tabulated in the gap analysis above — the combination(s) our corpus touches least may be exactly where the next contribution lands.`;
-  return [
+  const lines = [
     intro,
     '',
     ...bodies,
     '',
     closer,
-    '',
-    '**Referenced papers**',
-    ...papers.map((p) => `- [${citeKey(p)}] ${clip(p.title, 70)} — \`${p.paper_id}\``),
-  ].join('\n');
+  ];
+  if (citationIntel?.citations?.length) {
+    const cited = papers.find((p) => p.paper_id === citationIntel.paper?.id);
+    if (cited) {
+      lines.push(
+        '',
+        `**How the field cites [${citeKey(cited)}]** *(verbatim, via \`get_citation_contexts\`)*`,
+        ...citationIntel.citations.slice(0, 2).map((c) =>
+          `- “${clip(c.contexts[0], 160)}” — _${clip(c.citingPaper ?? 'unknown', 50)}_${c.year ? ` ${c.year}` : ''}`),
+      );
+    }
+  }
+  lines.push('', '**Referenced papers**', ...papers.map((p) => `- [${citeKey(p)}] ${clip(p.title, 70)} — \`${p.paper_id}\``));
+  return lines.join('\n');
 }
 
 // ---------- scenario ----------
@@ -168,12 +178,15 @@ async function runScenario(topic) {
       }, 'publish the connection map');
     }
 
+    const citationIntel = await step('get_citation_contexts', { paper_id: ids[0] }, 'how the field cites it — verbatim');
+    if (citationIntel?.available === false) log('Citation contexts unavailable right now (Semantic Scholar rate limit) — drafting from abstracts.');
+
     const draft = await step('draft_related_work', { style: 'related-work' }, 'gather cited material for prose');
     if (draft) {
       await step('save_artifact', {
         kind: 'draft',
         title: `Related Work — ${topic} (draft)`,
-        markdown: draftMarkdown(topic, draft),
+        markdown: draftMarkdown(topic, draft, citationIntel),
         sources: draft.papers.map((p) => p.paper_id),
       }, 'publish the cited draft');
     }

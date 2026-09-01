@@ -54,8 +54,13 @@ js/ui/*.js       board, search, inspector, activity log, demo agent (in-page Web
 test/            node --test suite hitting the real OpenAlex API through tools.js
 ```
 
-Deployment: GitHub Pages (origin-isolated HTTPS, satisfies the WebMCP security model).
-Testing: `npm test` (tools + live API) plus the in-page demo agent as an end-to-end harness.
+Deployment: Vercel (static, no build; origin-isolated HTTPS satisfies the WebMCP security
+model). Why static and not a backend: the user's agent is the only LLM in the loop — a server
+would duplicate it; the workspace never leaves the browser; a judge's first visit can't hit a
+cold start or an auth wall. The one real client-side gap (full-text reading) is partially
+closed with CORS-open Semantic Scholar enrichment instead. Testing: `npm test` (21 tests —
+tools + live OpenAlex + stubbed Semantic Scholar) plus the in-page demo agent as an
+end-to-end harness.
 
 **Demo video beats (≤3 min)**
 1. Open the live URL in ChatGPT's browser → "Site tools: 14 available" (0:00–0:20)

@@ -18,8 +18,8 @@ function call(name, input) {
   return tool.execute(input, {});
 }
 
-test('tool surface: 14 well-formed tools', () => {
-  assert.equal(toolDefs.length, 14);
+test('tool surface: 15 well-formed tools', () => {
+  assert.equal(toolDefs.length, 15);
   const names = new Set();
   for (const t of toolDefs) {
     assert.match(t.name, /^[a-zA-Z0-9_.-]{1,128}$/, `name ${t.name} must satisfy WebMCP naming rules`);
@@ -139,6 +139,24 @@ test('save_artifact publishes agent prose with sources', async () => {
   const art = store.getState().artifacts[0];
   assert.equal(art.createdBy, 'agent');
   assert.ok(store.provenanceOf(art.callId));
+});
+
+test('get_citation_contexts: verbatim contexts, or graceful degradation', async () => {
+  const p = store.allPapers()[0];
+  const res = await call('get_citation_contexts', { paper_id: p.id, max_citations: 5 });
+  assert.equal(res.paper_id, p.id);
+  if (res.available === false) {
+    assert.ok(res.note.includes('rate-limited') || res.note.includes('not indexed'),
+      'degraded response explains itself');
+  } else {
+    assert.ok(res.citations.length >= 1, 'expected at least one citing-paper context');
+    for (const c of res.citations) {
+      assert.ok(c.citingPaper);
+      assert.ok(Array.isArray(c.contexts) && c.contexts.length > 0);
+      assert.ok(c.contexts[0].length > 20, 'contexts are verbatim sentences');
+    }
+    assert.ok(typeof res.intentTally === 'object');
+  }
 });
 
 test('suggest_related stages new candidates in the inbox', async () => {

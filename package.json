@@ -4,7 +4,7 @@
   "description": "A literature review canvas for humans and agents, powered by WebMCP",
   "type": "module",
   "scripts": {
-    "test": "node --test --test-timeout=45000 test/tools.test.mjs",
+    "test": "node --test --test-timeout=45000 test/*.test.mjs",
     "serve": "python3 -m http.server 8347"
   },
   "license": "MIT"

@@ -5,6 +5,7 @@
 
 import * as store from './state.js';
 import * as oa from './openalex.js';
+import * as scholar from './scholar.js';
 
 let callSource = 'browser-agent';
 export function setCallSource(source) { callSource = source; }
@@ -199,8 +200,9 @@ export const toolDefs = [
     name: 'get_paper_details',
     title: 'Get paper details',
     description:
-      'Full record for one paper: abstract, topics, venue, citations, DOI. Works for ids already in the ' +
-      'workspace, in the Inbox, or any OpenAlex work id (W…).',
+      'Full record for one paper: abstract, topics, venue, citations, DOI, plus Semantic Scholar ' +
+      'enrichment when available (one-sentence TLDR, open-access PDF, influential citation count). ' +
+      'Works for ids already in the workspace, in the Inbox, or any OpenAlex work id (W…).',
     inputSchema: {
       type: 'object',
       properties: { paper_id: { type: 'string', description: 'OpenAlex work id, e.g. W2124364966' } },
@@ -212,12 +214,46 @@ export const toolDefs = [
       const local = store.getPaper(paper_id) ?? store.getState().inbox.find((p) => p.id === paper_id);
       const work = local?.abstract !== undefined && local?.abstract !== null ? local : await oa.getWork(paper_id, signal);
       const wsPaper = store.getPaper(paper_id);
+      const enrichment = await scholar.enrich({ doi: work.doi, title: work.title }, signal);
       return {
         ...work,
+        enrichment,
         in_workspace: Boolean(wsPaper),
         section: wsPaper ? store.getState().sections.find((s) => s.id === wsPaper.sectionId)?.title : null,
         notes: wsPaper?.notes ?? [],
       };
+    },
+  }),
+
+  tool({
+    name: 'get_citation_contexts',
+    title: 'Read citation contexts',
+    description:
+      'How other papers actually cite this work: verbatim sentences from citing papers with intents ' +
+      '(methodology/background/result), via Semantic Scholar. Use it to characterize a paper accurately ' +
+      'in comparisons and related-work drafts — what claim of the paper really travels in the literature.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        paper_id: { type: 'string' },
+        max_citations: { type: 'integer', minimum: 3, maximum: 20, description: 'Default 8.' },
+      },
+      required: ['paper_id'],
+      additionalProperties: false,
+    },
+    annotations: { readOnlyHint: true },
+    async execute({ paper_id, max_citations = 8 }, { signal } = {}) {
+      const p = store.getPaper(paper_id) ?? store.getState().inbox.find((x) => x.id === paper_id);
+      const work = p ?? await oa.getWork(paper_id, signal);
+      const res = await scholar.citationContexts(work, { limit: max_citations, signal });
+      if (!res) {
+        return {
+          paper_id,
+          available: false,
+          note: 'Semantic Scholar is rate-limited or has not indexed this paper. Characterize it from the abstract instead.',
+        };
+      }
+      return { available: true, ...res };
     },
   }),
 
@@ -493,8 +529,9 @@ export const toolDefs = [
     name: 'suggest_related',
     title: 'Suggest related papers',
     description:
-      'Given a seed paper (default: most recently added), suggest related work via OpenAlex relatedness + ' +
-      'citations, excluding anything already in the workspace. Suggestions are staged in the Inbox.',
+      'Given a seed paper (default: most recently added), suggest related work — Semantic Scholar ' +
+      'recommendations when available, OpenAlex relatedness + citations otherwise — excluding anything ' +
+      'already in the workspace. Suggestions are staged in the Inbox.',
     inputSchema: {
       type: 'object',
       properties: { paper_id: { type: 'string' }, limit: { type: 'integer', minimum: 1, maximum: 10 } },
@@ -509,14 +546,25 @@ export const toolDefs = [
         if (!all.length) fail('Workspace is empty — pass an explicit paper_id.');
         seed = all[0];
       }
-      const { seed: seedInfo, suggestions } = await oa.suggestRelated(seed.id, {
-        limit,
-        excludeIds: store.allPapers().map((p) => p.id),
-        signal,
-      });
+      const exclude = new Set([seed.id, ...store.allPapers().map((p) => p.id)]);
+      let suggestions = [];
+      let source = 'openalex';
+      const doiHints = await scholar.recommendations(seed, { limit, signal });
+      if (doiHints?.length) {
+        const hydrated = await oa.hydrateByDois(doiHints.map((c) => c.doi), signal);
+        suggestions = hydrated.filter((w) => !exclude.has(w.id));
+        if (suggestions.length) source = 'semantic-scholar';
+      }
+      if (suggestions.length < 3) {
+        const { suggestions: oaSugs } = await oa.suggestRelated(seed.id, { limit, excludeIds: [...exclude] });
+        const seen = new Set(suggestions.map((w) => w.id));
+        suggestions = suggestions.concat(oaSugs.filter((w) => !seen.has(w.id)));
+      }
+      suggestions = suggestions.slice(0, limit);
       store.setInbox(suggestions);
       return {
-        seed: seedInfo,
+        seed: { id: seed.id, title: seed.title, year: seed.year },
+        source,
         suggestion_count: suggestions.length,
         suggestions: suggestions.map(compact),
         next_step: 'Staged in the Inbox. add_papers to keep any of them.',
