@@ -237,10 +237,6 @@ function toast(message, { imageDataUrl = null } = {}) {
   setTimeout(() => { el.classList.remove('show'); setTimeout(() => el.remove(), 400); }, imageDataUrl ? 9000 : 4200);
 }
 
-function esc(s) {
-  return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-}
-
 async function bootFromShareLink() {
   const m = location.hash.match(/^#w=(.+)$/);
   if (!m) return false;
