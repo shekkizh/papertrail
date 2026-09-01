@@ -29,9 +29,9 @@ function shortId() {
 }
 
 function validOp(op) {
+  // actor is optional per-op — the body-level actor is the fallback
   return op && typeof op === 'object' &&
     KINDS.has(op.kind) &&
-    typeof op.actor === 'string' && op.actor.length <= 40 &&
     op.payload !== undefined && op.payload !== null;
 }
 
@@ -69,9 +69,10 @@ export default async function handler(req, res) {
       const incoming = Array.isArray(body?.ops) ? body.ops.filter(validOp).slice(0, 50) : [];
       let maxSent = since;
       for (const op of incoming) {
+        const opActor = String(typeof op.actor === 'string' ? op.actor : actor).slice(0, 40);
         const inserted = await db()`
           INSERT INTO ops (workspace_id, kind, payload, actor, ts)
-          VALUES (${id}, ${op.kind}, ${JSON.stringify(op.payload ?? {})}, ${actor}, ${Math.floor(+op.ts || Date.now())})
+          VALUES (${id}, ${op.kind}, ${JSON.stringify(op.payload ?? {})}, ${opActor}, ${Math.floor(+op.ts || Date.now())})
           RETURNING seq`;
         maxSent = Math.max(maxSent, Number(inserted[0].seq));
       }
@@ -89,12 +90,6 @@ export default async function handler(req, res) {
         ops: remote.map((r) => ({ seq: Number(r.seq), kind: r.kind, payload: r.payload, actor: r.actor, ts: Number(r.ts) })),
         seq: Math.max(maxSent, ...(remote.length ? remote.map((r) => Number(r.seq)) : [since])),
         peers,
-        debug: {
-          bodyOpsType: typeof body?.ops,
-          bodyOpsLen: Array.isArray(body?.ops) ? body.ops.length : null,
-          firstOp: body?.ops?.[0] ?? null,
-          validCount: Array.isArray(body?.ops) ? body.ops.filter(validOp).length : null,
-        },
       });
     }
 
