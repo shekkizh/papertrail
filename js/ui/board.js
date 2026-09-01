@@ -56,10 +56,11 @@ function paperCard(p) {
 }
 
 function column(section, papers) {
+  const editable = store.isReadOnly() ? 'false' : 'plaintext-only';
   const col = el(`
     <div class="column" data-section="${section.id}">
       <header class="col-head">
-        <h3 class="col-title" contenteditable="plaintext-only" spellcheck="false" title="Click to rename">${escapeHtml(section.title)}</h3>
+        <h3 class="col-title" contenteditable="${editable}" spellcheck="false" title="${store.isReadOnly() ? 'Read-only snapshot' : 'Click to rename'}">${escapeHtml(section.title)}</h3>
         <span class="col-count">${papers.length}</span>
       </header>
       <div class="col-body"></div>

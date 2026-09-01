@@ -45,6 +45,9 @@ function validate(input, schema, toolName, path = '') {
         if (prop.enum && !prop.enum.includes(v)) {
           fail(`${toolName}: "${label}" must be one of ${prop.enum.join(', ')}`);
         }
+        if (prop.minLength !== undefined && v.length < prop.minLength) {
+          fail(`${toolName}: "${label}" needs at least ${prop.minLength} character(s)`);
+        }
         if (prop.maxLength && v.length > prop.maxLength) {
           fail(`${toolName}: "${label}" exceeds ${prop.maxLength} characters`);
         }

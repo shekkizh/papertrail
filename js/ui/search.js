@@ -13,6 +13,8 @@ const PROMPTS = [
 ];
 
 let searchSeq = 0;
+let lastYear = '';
+let lastStatus = '';
 
 function esc(s) {
   return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
@@ -26,16 +28,18 @@ export function renderSearch(container, state) {
     return;
   }
   const wasOpen = container.querySelector('#search-input')?.value ?? '';
+  lastYear = container.querySelector('#search-year')?.value ?? lastYear;
+  lastStatus = container.querySelector('#search-status')?.textContent ?? lastStatus;
   container.innerHTML = `
     <div class="search-block">
       <form id="search-form" class="search-form">
         <input id="search-input" type="search" placeholder="Search 250M+ papers…" autocomplete="off" value="${esc(wasOpen)}" />
         <div class="search-row">
-          <label class="year-label">from <input id="search-year" type="number" min="1990" max="2026" placeholder="2019" /></label>
+          <label class="year-label">from <input id="search-year" type="number" min="1990" max="2026" placeholder="2019" value="${esc(lastYear)}" /></label>
           <button type="submit" class="btn btn-primary">Search</button>
         </div>
       </form>
-      <div id="search-status" class="search-status" hidden></div>
+      <div id="search-status" class="search-status" ${lastStatus ? '' : 'hidden'}>${esc(lastStatus)}</div>
     </div>
 
     <div class="inbox-block">
@@ -70,15 +74,20 @@ export function renderSearch(container, state) {
     if (!q) return;
     const fromYear = parseInt(container.querySelector('#search-year').value, 10) || null;
     const seq = ++searchSeq;
+    lastStatus = 'Searching OpenAlex…';
     status.hidden = false;
-    status.textContent = 'Searching OpenAlex…';
+    status.textContent = lastStatus;
     try {
       const results = await oa.searchWorks(q, { perPage: 10, fromYear });
       if (seq !== searchSeq) return; // a newer search superseded this one
       store.setInbox(results, { query: q });
+      lastStatus = '';
       status.hidden = true;
     } catch (err) {
-      if (seq === searchSeq) status.textContent = `Search failed: ${err.message}`;
+      if (seq === searchSeq) {
+        lastStatus = `Search failed: ${err.message}`;
+        status.textContent = lastStatus;
+      }
     }
   });
 

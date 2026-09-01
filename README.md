@@ -12,6 +12,14 @@ canvas instantly and every agent-written object carrying **provenance back to th
 call that produced it**.
 
 Highlights beyond the core loop:
+- **Live co-watch**: open the app in two windows of the same browser and both stay in sync in
+  real time — drag a card in one and watch it land in the other, agent writes streaming into
+  both. No backend; just the platform's `storage` events. The **live trail** strip under the
+  header shows every tool call as it happens, colored by who made it.
+- **Steal the pattern**: [`pattern/`](./pattern/) extracts the whole design — typed tools on
+  `document.modelContext`, a receipt ledger, provenance stamps on agent-written objects,
+  re-runnable audits — into **~130 lines of zero-dependency code** with a one-file demo app.
+  PaperTrail isn't just an app; it's a blueprint any canvas, dashboard, or storefront can adopt.
 - **Share links**: encode the whole workspace in the URL — the shared snapshot registers six
   read tools, so *another person's agent* can load, audit, and reason over your review. One
   click duplicates it into your own browser to make it editable. The share link itself *is* an
@@ -142,18 +150,20 @@ agent-written note with a soft overreach so the audit has something to catch.
 1. 0:00 — Live URL in ChatGPT's browser; **Site tools** shows 16 registered tools (on screen).
 2. 0:15 — Human seeds two papers they trust; prompt agent A: *"find recent work on agent
    communication failures, add the best 5 to To Read with summary notes"* → cards + notes land
-   live; open one note's provenance popover.
+   live; open one note's provenance popover. The **live trail** strip pulses with every call.
 3. 0:50 — Agent A also writes a limitation note that slightly overreaches its evidence (seeded).
-4. 1:00 — Human clicks **Share** → open the link on a *second machine/browser*; the Site-tools
-   indicator visibly registers the snapshot's 6 read tools — WebMCP firing on the shared page.
+4. 1:00 — Split-screen moment: open a second window on the same workspace — drag a card in one
+   window while the agent's writes stream into both (co-watch, no backend). Then click
+   **Share** → open the link on a *second machine/browser*; the Site-tools indicator visibly
+   registers the snapshot's 6 read tools — WebMCP firing on the shared page.
 5. 1:20 — Agent B (Codex or a second ChatGPT session): *"this is a colleague's review — audit
    it: check the notes against their receipts and the citation contexts"* → it calls
    `get_workspace_state` + `get_citation_contexts`, flags the overreaching note.
 6. 1:50 — Human clicks **⟳ verify** on an artifact: sources refetched from OpenAlex live,
    diffs shown. *"The audit is re-runnable, not decorative."*
 7. 2:10 — **Duplicate to my browser** → the host edits the flagged note (badge flips to *you*).
-8. 2:30 — Export BibTeX; show the **Activity** tab: every call, inputs, results. Close:
-   *"A workspace any agent can operate, with receipts — a pattern any web app can reuse."*
+8. 2:30 — Export BibTeX; show the **Activity** tab: every call, inputs, results. Close on
+   [`pattern/`](./pattern/): *"the same four moves, 130 lines, any web app."*
 
 Production tips: pre-record agent A's half so model latency doesn't burn the clock; keep the
 share-page tool registration moment in full view; the audit must catch something real.

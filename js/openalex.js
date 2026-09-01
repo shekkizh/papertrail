@@ -207,6 +207,7 @@ export function identifyGaps(papers) {
     ],
     topicFrequency: Object.fromEntries(topTopics),
     commonTopicPairs: Object.fromEntries(topPairs),
+    cooccurrenceMatrix: Object.fromEntries([...pairCount.entries()]), // full raw data for your own analysis
     venueSpread: Object.fromEntries([...venues.entries()].sort((a, b) => b[1] - a[1]).slice(0, 6)),
     gapHypotheses: candidates.slice(0, 5),
     note: 'Gap hypotheses are statistical (co-occurrence based), not judgments. Verify with a targeted search_literature call.',

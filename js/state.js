@@ -44,19 +44,96 @@ function sanitizePaper(p) {
   };
 }
 
+const SAFE_ID = (prefix) => new RegExp(`^${prefix}[a-z0-9_-]{2,40}$`, 'i');
+const SAFE_LABEL = /^[a-z0-9_-]{3,40}$/i;
+
+function sanitizeNote(n) {
+  if (!n || typeof n !== 'object') return null;
+  return {
+    id: SAFE_ID('note_').test(String(n.id)) ? String(n.id) : uid('note'),
+    type: NOTE_TYPES.includes(n.type) ? n.type : 'summary',
+    content: typeof n.content === 'string' ? n.content.slice(0, 2000) : '',
+    createdBy: n.createdBy === 'human' ? 'human' : 'agent',
+    callId: typeof n.callId === 'string' && SAFE_ID('call_').test(n.callId) ? n.callId : null,
+    sources: Array.isArray(n.sources) ? n.sources.filter((s) => /^W\d+$/.test(String(s))) : [],
+    createdAt: Number.isFinite(n.createdAt) ? n.createdAt : Date.now(),
+  };
+}
+
+const ARTIFACT_KINDS = ['comparison', 'gaps', 'draft', 'summary'];
+
+function sanitizeArtifact(a) {
+  if (!a || typeof a !== 'object' || typeof a.data?.markdown !== 'string') return null;
+  return {
+    id: SAFE_ID('art_').test(String(a.id)) ? String(a.id) : uid('art'),
+    kind: ARTIFACT_KINDS.includes(a.kind) ? a.kind : 'summary',
+    title: String(a.title ?? 'Untitled').slice(0, 120),
+    data: { markdown: a.data.markdown.slice(0, 40000) },
+    createdBy: a.createdBy === 'human' ? 'human' : 'agent',
+    callId: typeof a.callId === 'string' && SAFE_ID('call_').test(a.callId) ? a.callId : null,
+    sources: Array.isArray(a.sources) ? a.sources.filter((s) => /^W\d+$/.test(String(s))) : [],
+    revisions: Array.isArray(a.revisions)
+      ? a.revisions
+          .filter((r) => r && typeof r === 'object')
+          .map((r) => ({
+            callId: typeof r.callId === 'string' && SAFE_ID('call_').test(r.callId) ? r.callId : null,
+            ts: Number.isFinite(r.ts) ? r.ts : Date.now(),
+          }))
+      : [],
+    createdAt: Number.isFinite(a.createdAt) ? a.createdAt : Date.now(),
+  };
+}
+
 function migrate(s) {
   const d = defaultState();
   const merged = { ...d, ...(typeof s === 'object' && s ? s : {}) };
+
+  // sections: strict id charset — ids are interpolated into DOM attributes
+  const seenSectionIds = new Set();
+  const sections = (Array.isArray(merged.sections) ? merged.sections : [])
+    .map((sec) => ({
+      id: typeof sec?.id === 'string' && SAFE_LABEL.test(sec.id) && !seenSectionIds.has(sec.id)
+        ? sec.id
+        : uid('sec'),
+      title: String(sec?.title ?? 'Section').slice(0, 60),
+    }))
+    .map((sec) => (seenSectionIds.has(sec.id) ? { ...sec, id: uid('sec') } : (seenSectionIds.add(sec.id), sec)));
+  merged.sections = sections.length ? sections : d.sections;
+  const sectionIds = new Set(merged.sections.map((x) => x.id));
+
   const papers = {};
   for (const [id, p] of Object.entries(merged.papers ?? {})) {
+    if (!/^W\d+$/.test(String(id))) continue;
     const clean = sanitizePaper({ ...p, id });
-    if (clean) papers[id] = clean;
+    if (!clean) continue;
+    if (!sectionIds.has(clean.sectionId)) clean.sectionId = merged.sections[0].id;
+    clean.notes = (Array.isArray(clean.notes) ? clean.notes : [])
+      .map(sanitizeNote)
+      .filter(Boolean);
+    papers[id] = clean;
   }
   merged.papers = papers;
-  merged.inbox = Array.isArray(merged.inbox) ? merged.inbox : [];
+
+  merged.inbox = (Array.isArray(merged.inbox) ? merged.inbox : [])
+    .map((p) => sanitizePaper({ ...p, id: String(p?.id ?? '') }))
+    .filter(Boolean);
   merged.artifacts = (Array.isArray(merged.artifacts) ? merged.artifacts : [])
-    .filter((a) => a && typeof a === 'object' && a.data && typeof a.data.markdown === 'string');
-  merged.activity = Array.isArray(merged.activity) ? merged.activity : [];
+    .map(sanitizeArtifact)
+    .filter(Boolean);
+  merged.activity = (Array.isArray(merged.activity) ? merged.activity : [])
+    .filter((c) => c && typeof c === 'object' && typeof c.tool === 'string')
+    .slice(0, 200)
+    .map((c) => ({
+      id: SAFE_ID('call_').test(String(c.id)) ? String(c.id) : uid('call'),
+      ts: Number.isFinite(c.ts) ? c.ts : Date.now(),
+      tool: String(c.tool).slice(0, 60),
+      input: c.input && typeof c.input === 'object' ? c.input : {},
+      source: ['browser-agent', 'demo-agent', 'human'].includes(c.source) ? c.source : 'browser-agent',
+      summary: typeof c.summary === 'string' ? c.summary.slice(0, 300) : null,
+      ok: typeof c.ok === 'boolean' ? c.ok : null,
+    }));
+  merged.title = String(merged.title ?? d.title).slice(0, 120);
+  merged.lastQuery = typeof merged.lastQuery === 'string' ? merged.lastQuery.slice(0, 200) : null;
   return merged;
 }
 
@@ -76,6 +153,24 @@ export function init({ reset = false, fromSnapshot = null } = {}) {
   }
   if (!state) state = defaultState();
   return state;
+}
+
+// Live co-watch: two browser windows on the same workspace stay in sync.
+// persist() writes localStorage; the `storage` event fires in every OTHER
+// tab, so each window re-reads and re-renders on the other's writes —
+// human drags and agent tool calls appear on both boards in real time,
+// with no backend. Returns an unwire function.
+export function wireCrossTabSync() {
+  if (typeof window === 'undefined' || !hasLocalStorage) return () => {};
+  const handler = (e) => {
+    if (e.key !== STORAGE_KEY || !e.newValue) return;
+    try {
+      state = migrate(JSON.parse(e.newValue));
+      emit();
+    } catch { /* ignore malformed cross-tab writes */ }
+  };
+  window.addEventListener('storage', handler);
+  return () => window.removeEventListener('storage', handler);
 }
 
 export function subscribe(fn) {
@@ -204,6 +299,7 @@ export function workspaceSnapshot() {
 // ---------- activity / provenance ----------
 
 export function recordCall(tool, input, source) {
+  if (readOnly) return null; // auditors can verify without mutating the snapshot
   const callId = uid('call');
   state.activity.unshift({
     id: callId,
@@ -220,6 +316,7 @@ export function recordCall(tool, input, source) {
 }
 
 export function completeCall(callId, summary, ok = true) {
+  if (!callId || readOnly) return;
   const entry = state.activity.find((a) => a.id === callId);
   if (entry) {
     entry.summary = summary;

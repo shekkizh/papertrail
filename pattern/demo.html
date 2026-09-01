@@ -1,0 +1,168 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Receipts pattern demo — a to-do list any agent can operate, with a paper trail</title>
+<style>
+  :root { color-scheme: light; }
+  body { font-family: system-ui, sans-serif; max-width: 640px; margin: 40px auto; padding: 0 20px; color: #221d15; }
+  h1 { font-size: 22px; } p.lead { color: #6b6152; line-height: 1.5; }
+  code { font-size: 0.9em; }
+  form { display: flex; gap: 8px; margin: 18px 0; }
+  input[type=text] { flex: 1; padding: 9px 12px; border: 1px solid #cfc4ae; border-radius: 9px; font: inherit; }
+  button { font: inherit; font-weight: 600; padding: 8px 14px; border-radius: 9px; border: 1px solid #cfc4ae; background: #0e6b5c; color: #fff; cursor: pointer; }
+  button.ghost { background: none; color: #6b6152; }
+  ul { list-style: none; padding: 0; }
+  li { display: flex; gap: 10px; align-items: baseline; padding: 9px 12px; border: 1px solid #e0d8c8; border-radius: 10px; margin-bottom: 7px; background: #fff; }
+  li.done label { text-decoration: line-through; color: #857a68; }
+  li code { font-size: 10px; color: #0a4a40; background: #e2efec; border-radius: 6px; padding: 2px 6px; cursor: pointer; }
+  .banner { background: #f7ead3; border: 1px solid #e4cf9f; color: #6b4a12; padding: 10px 14px; border-radius: 10px; font-size: 13px; }
+  #ledger { margin-top: 26px; border-top: 1px dashed #cfc4ae; padding-top: 12px; }
+  .receipts-hint { color: #857a68; font-size: 13px; }
+  .receipt { border: 1px solid #e0d8c8; border-radius: 9px; padding: 8px 11px; margin-bottom: 7px; font-size: 12.5px; background: #fffcf6; }
+  .receipt-head { display: flex; gap: 8px; align-items: center; }
+  .receipt-head time { margin-left: auto; color: #857a68; font-size: 11px; }
+  .receipt-ok.good { color: #0a4a40; } .receipt-ok.bad { color: #b3372e; }
+  .receipt pre { background: #f5f1e8; border-radius: 6px; padding: 6px 8px; overflow-x: auto; font-size: 11px; margin: 6px 0; }
+  .receipt-sum { color: #4a4336; }
+  .receipt-verify { font-size: 11px; padding: 3px 8px; background: none; color: #0a4a40; border: 1px solid #bcd8d1; }
+  .receipt-result { font-size: 11.5px; color: #4a4336; margin-left: 8px; }
+</style>
+</head>
+<body>
+  <h1>A to-do list your agent operates — with receipts</h1>
+  <p class="lead">The PaperTrail pattern applied to the smallest possible app. Three tools register on
+  <code>document.modelContext</code> (or a local stand-in), every call lands in the ledger below,
+  and every task carries a <code>receipt</code> linking it to the exact tool call that last touched it.
+  Click a receipt to re-run that call through the registered tools and see whether the outcome still holds.</p>
+  <div id="mode" class="banner" hidden></div>
+  <form id="add-form">
+    <input id="task" type="text" placeholder="Add a task (or let your agent do it)…" />
+    <button type="submit">Add</button>
+  </form>
+  <ul id="list"></ul>
+  <button class="ghost" id="clear">Clear done</button>
+  <div id="ledger"></div>
+  <script type="module">
+    import { defineReceiptedTools, attachLedger } from './receipts.js';
+
+    const KEY = 'receipts.demo.tasks.v1';
+    const load = () => { try { return JSON.parse(localStorage.getItem(KEY) ?? '[]'); } catch { return []; } };
+    let tasks = load();
+    const listeners = new Set();
+    const emit = () => {
+      try { localStorage.setItem(KEY, JSON.stringify(tasks)); } catch { /* quota */ }
+      for (const fn of listeners) fn(tasks);
+    };
+
+    const { register, callTool, getCalls, onChange, stamp } = defineReceiptedTools({
+      name: 'todo-demo',
+      tools: [
+        {
+          name: 'add_task',
+          title: 'Add a task',
+          description: 'Add one task to the shared list. The human sees it immediately.',
+          inputSchema: { type: 'object', properties: { text: { type: 'string', minLength: 1, maxLength: 140 } }, required: ['text'], additionalProperties: false },
+          async execute({ text }) {
+            const receipt = stamp();
+            tasks = [...tasks, { id: `t_${Date.now().toString(36)}`, text: String(text).slice(0, 140), done: false, receipt }];
+            emit();
+            return { added: text, receipt: receipt.callId };
+          },
+        },
+        {
+          name: 'toggle_task',
+          title: 'Complete or reopen a task',
+          description: 'Flip a task between done and not done by matching part of its text.',
+          inputSchema: { type: 'object', properties: { text: { type: 'string' } }, required: ['text'], additionalProperties: false },
+          async execute({ text }) {
+            const t = tasks.find((x) => x.text.toLowerCase().includes(String(text).toLowerCase()));
+            if (!t) throw new Error(`No task matching "${text}"`);
+            const receipt = stamp();
+            t.done = !t.done;
+            t.receipt = receipt;
+            emit();
+            return { task: t.text, done: t.done, receipt: receipt.callId };
+          },
+        },
+        {
+          name: 'get_tasks',
+          title: 'Read the tasks',
+          description: 'List every task and its state.',
+          inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+          async execute() { return { tasks, count: tasks.length }; },
+        },
+      ],
+    });
+
+    const list = document.getElementById('list');
+    const render = (items) => {
+      list.innerHTML = '';
+      for (const t of items) {
+        const li = document.createElement('li');
+        li.className = t.done ? 'done' : '';
+        li.innerHTML = `
+          <input type="checkbox" ${t.done ? 'checked' : ''} data-toggle="${t.id}" />
+          <label>${t.text.replace(/&/g, '&amp;').replace(/</g, '&lt;')}</label>
+          ${t.receipt ? `<code data-receipt="${t.receipt.callId}" title="agent action — click to re-verify">receipt</code>` : ''}`;
+        list.appendChild(li);
+      }
+    };
+    listeners.add(render);
+    render(tasks);
+
+    document.getElementById('add-form').addEventListener('submit', (e) => {
+      e.preventDefault();
+      const input = document.getElementById('task');
+      if (!input.value.trim()) return;
+      tasks = [...tasks, { id: `t_${Date.now().toString(36)}`, text: input.value.trim().slice(0, 140), done: false }];
+      emit();
+      input.value = '';
+    });
+    list.addEventListener('change', (e) => {
+      const id = e.target.dataset.toggle;
+      if (!id) return;
+      const t = tasks.find((x) => x.id === id);
+      if (t) { t.done = !t.done; emit(); }
+    });
+    document.getElementById('clear').addEventListener('click', () => {
+      tasks = tasks.filter((t) => !t.done);
+      emit();
+    });
+    list.addEventListener('click', async (e) => {
+      const id = e.target.dataset?.receipt;
+      if (!id) return;
+      e.target.textContent = '…';
+      const entry = getCalls().find((c) => c.id === id);
+      if (!entry) { e.target.textContent = 'receipt'; return; }
+      try {
+        const result = await callTool(entry.tool, entry.input);
+        const after = typeof result === 'string' ? result : JSON.stringify(result)?.slice(0, 90);
+        e.target.textContent = entry.summary === after ? '✓ verified' : `~ changed: ${after}`;
+      } catch (err) {
+        e.target.textContent = `✕ ${String(err.message ?? err).slice(0, 60)}`;
+      }
+    });
+
+    const status = document.getElementById('mode');
+    register().then((r) => {
+      if (r.mode === 'shim') { status.hidden = false; status.textContent = r.note; }
+      console.info(`[receipts demo] ${r.mode}:`, r.registered, r.errors ?? '');
+    });
+
+    attachLedger(document.getElementById('ledger'), { app: 'todo-demo' })
+      .bind({ getCalls, onChange, verifyCall: async (id) => {
+        const entry = getCalls().find((c) => c.id === id);
+        if (!entry) return { ok: false, note: 'no such call' };
+        try {
+          const result = await callTool(entry.tool, entry.input);
+          const after = typeof result === 'string' ? result : JSON.stringify(result)?.slice(0, 140);
+          return { ok: true, stable: entry.summary === after, after };
+        } catch (err) {
+          return { ok: false, note: String(err.message ?? err) };
+        }
+      } });
+  </script>
+</body>
+</html>

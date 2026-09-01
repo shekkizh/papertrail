@@ -45,14 +45,16 @@ function noteView(p, n) {
   const li = document.createElement('div');
   li.className = 'note';
   li.dataset.noteId = n.id;
+  const ro = store.isReadOnly();
   li.innerHTML = `
     <div class="note-head">
       <span class="note-type t-${n.type}">${NOTE_ICON[n.type] ?? '•'} ${n.type}</span>
       ${whoBadge(n.createdBy)}
+      ${ro ? '' : `
       <span class="note-actions">
         <button class="icon-btn" data-edit="${n.id}" title="Edit note">✎</button>
         <button class="icon-btn" data-del="${n.id}" title="Delete note">✕</button>
-      </span>
+      </span>`}
     </div>
     <p class="note-content">${esc(n.content)}</p>
     ${n.callId ? provenanceDetails(n.callId) : ''}`;
@@ -97,15 +99,17 @@ function inboxPaperView(container, p) {
       <p class="paper-meta">${esc(p.authors.join(', ') || 'Unknown authors')} · ${p.year ?? 'n.d.'}</p>
       <p class="paper-meta dim">${esc(p.venue ?? '')} · ${p.citedBy} citations · ${esc(p.primaryTopic ?? '')}</p>
       <div class="paper-links">
-        <button class="btn btn-primary btn-xs" id="insp-add">＋ add to workspace</button>
+        ${store.isReadOnly() ? '' : '<button class="btn btn-primary btn-xs" id="insp-add">＋ add to workspace</button>'}
         <a class="btn btn-ghost btn-xs" href="${esc(p.openalexUrl ?? `https://openalex.org/${p.id}`)}" target="_blank" rel="noopener">OpenAlex ↗</a>
         ${p.oaUrl ? `<a class="btn btn-ghost btn-xs" href="${esc(p.oaUrl)}" target="_blank" rel="noopener">open access PDF ↗</a>` : ''}
       </div>
     </div>
     ${p.abstract ? `<details class="abstract" open><summary>Abstract</summary><p>${esc(p.abstract)}</p></details>`
       : '<p class="hint">No abstract available in OpenAlex.</p>'}
-    <p class="hint pad-x">Your agent staged this from a search. Add it to start a notes thread.</p>`;
-  container.querySelector('#insp-add').addEventListener('click', () => {
+    <p class="hint pad-x">${store.isReadOnly()
+      ? 'Your agent staged this from a search. Duplicate the snapshot to add it to your own workspace.'
+      : 'Your agent staged this from a search. Add it to start a notes thread.'}</p>`;
+  container.querySelector('#insp-add')?.addEventListener('click', () => {
     store.addPaper(p, { addedBy: 'human' });
     select(p.id);
   });
@@ -180,12 +184,13 @@ function paperTab(container, state) {
 function artifactView(a) {
   const div = document.createElement('div');
   div.className = 'artifact';
+  const ro = store.isReadOnly();
   div.innerHTML = `
     <div class="artifact-head">
       <span class="artifact-kind k-${a.kind}">${a.kind}</span>
       <h4>${esc(a.title)}</h4>
       ${whoBadge(a.createdBy)}
-      <button class="icon-btn" data-del-art="${a.id}" title="Delete artifact">✕</button>
+      ${ro ? '' : '<button class="icon-btn" data-del-art="' + a.id + '" title="Delete artifact">✕</button>'}
     </div>
     <div class="artifact-body md">${renderMarkdown(a.data.markdown)}</div>
     ${a.callId ? provenanceDetails(a.callId) : '<p class="hint tiny">added by you</p>'}

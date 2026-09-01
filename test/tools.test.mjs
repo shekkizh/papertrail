@@ -252,6 +252,7 @@ test('validation: schemas reject bad agent input with useful errors', async () =
   await assert.rejects(() => call('get_paper_details', { paper_id: 'not-an-id' }), /Not an OpenAlex work id/);
   await assert.rejects(() => call('search_literature', { query: 'x', bogus: true }), /unexpected property "bogus"/);
   await assert.rejects(() => call('add_papers', { paper_ids: ['W1'], notes: [{ paper_id: 'W1', type: 'nope', content: 'x' }] }), /must be one of/);
+  await assert.rejects(() => call('annotate_paper', { paper_id: 'W1', type: 'summary', content: '' }), /at least 1 character/);
 });
 
 test('activity log: every call is auditable', () => {

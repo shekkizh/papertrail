@@ -8,7 +8,7 @@ import { renderBoard } from './ui/board.js';
 import { renderSearch } from './ui/search.js';
 import { renderInspectorSafe } from './ui/inspector.js';
 import { openDemo } from './ui/demoagent.js';
-import { onSelect, getSelection } from './ui/selection.js';
+import { onSelect, getSelection, setTab } from './ui/selection.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -22,6 +22,30 @@ function download(name, content, type) {
 
 const isEditable = (el) =>
   el && (el.matches?.('input, textarea, select') || el.isContentEditable);
+
+// ---------- live pulse strip ----------
+// One dot per tool call, newest right. The "same canvas, same time" made
+// visible: agent writes, demo runs, and human actions stream here — and via
+// cross-tab sync, in every open view of the workspace.
+
+function timeAgo(ts) {
+  const s = Math.round((Date.now() - ts) / 1000);
+  if (s < 60) return `${s}s ago`;
+  if (s < 3600) return `${Math.round(s / 60)}m ago`;
+  return `${Math.round(s / 3600)}h ago`;
+}
+
+function renderPulse(state) {
+  const strip = $('pulse');
+  if (!state.activity.length) { strip.hidden = true; return; }
+  strip.hidden = false;
+  strip.innerHTML = `
+    <span class="pulse-label">live trail</span>` +
+    state.activity.slice(0, 48).map((c) =>
+      `<button class="pulse-dot p-${c.source} ${c.ok === false ? 'p-fail' : ''}"
+        title="${c.tool} · ${c.source === 'demo-agent' ? 'demo agent' : c.source} · ${timeAgo(c.ts)}${c.ok === false ? ' (failed)' : ''}"
+        aria-label="${c.tool}"></button>`).join('');
+}
 
 function renderBanner(status) {
   const banner = $('banner');
@@ -103,6 +127,9 @@ async function shareWorkspace() {
     return;
   }
   history.replaceState(null, '', url);
+  // mark this tab as the snapshot's owner so reloading it never boots the
+  // (frozen) hash over the live workspace
+  try { sessionStorage.setItem('papertrail.ownHash', '1'); } catch { /* private mode */ }
   try {
     await navigator.clipboard.writeText(url);
     toast(`Share link copied — visiting agents get ${shareToolCount()} read-only tools to audit it.`);
@@ -112,10 +139,17 @@ async function shareWorkspace() {
 }
 
 async function duplicateSnapshot() {
+  let existing = null;
+  try { existing = JSON.parse(localStorage.getItem('papertrail.workspace.v1') || 'null'); } catch { /* corrupt */ }
+  const hasWork = existing?.papers && Object.keys(existing.papers).length > 0;
+  if (hasWork && !confirm('Replace your current workspace with this shared snapshot? Your current papers will be overwritten.')) {
+    return;
+  }
   const s = store.getState();
   try {
     localStorage.setItem('papertrail.workspace.v1', JSON.stringify(s));
   } catch { /* quota */ }
+  try { sessionStorage.setItem('papertrail.ownHash', '1'); } catch { /* private mode */ }
   history.replaceState(null, '', location.pathname);
   location.reload();
 }
@@ -132,6 +166,14 @@ function toast(message) {
 async function bootFromShareLink() {
   const m = location.hash.match(/^#w=(.+)$/);
   if (!m) return false;
+  // this tab already owns a live workspace (it created or duplicated this
+  // snapshot) — never boot the frozen hash over it
+  try {
+    if (sessionStorage.getItem('papertrail.ownHash') === '1') {
+      history.replaceState(null, '', location.pathname + location.search);
+      return false;
+    }
+  } catch { /* private mode */ }
   try {
     const snapshot = await store.decodeWorkspace(m[1]);
     store.setReadOnly(true);
@@ -155,6 +197,7 @@ function renderHeader(state) {
 async function boot() {
   const shared = await bootFromShareLink();
   store.init();
+  store.wireCrossTabSync();
   const board = $('board');
   const searchRail = $('search-rail');
   const inspector = $('inspector');
@@ -168,6 +211,7 @@ async function boot() {
     if (!holdsFocus(searchRail)) renderSearch(searchRail, state);
     if (!holdsFocus(inspector)) renderInspectorSafe(inspector, state);
     renderHeader(state);
+    renderPulse(state);
   };
   store.subscribe(render);
   onSelect(() => {
@@ -175,6 +219,18 @@ async function boot() {
     renderInspectorSafe(inspector, store.getState());
   });
   render(store.getState());
+
+  // When focus leaves a panel that was skipped mid-edit, repaint it once —
+  // deferred past any in-flight click so the panel can't strand stale content.
+  let lastPointerDown = 0;
+  window.addEventListener('pointerdown', () => { lastPointerDown = Date.now(); });
+  document.addEventListener('focusout', () => {
+    setTimeout(() => {
+      if (Date.now() - lastPointerDown < 300) return; // a click is in flight
+      if (isEditable(document.activeElement)) return; // focus moved elsewhere
+      render(store.getState());
+    }, 150);
+  });
 
   // Renames
   $('ws-title').addEventListener('blur', () => {
@@ -211,6 +267,7 @@ async function boot() {
     $('share-btn').hidden = true;
     $('reset-btn').hidden = true;
     $('demo-btn').hidden = true;
+    $('ws-title').setAttribute('contenteditable', 'false');
   }
 
   setupWebMCP().then((status) => {
