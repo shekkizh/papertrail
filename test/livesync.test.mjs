@@ -85,3 +85,21 @@ test('live ops: hostile remote payloads are contained', () => {
   assert.ok(s.papers.W7001.notes.length === 0 || store.NOTE_TYPES.includes(s.papers.W7001.notes[0].type));
   assert.equal(s.artifacts.length, 0);
 });
+
+test('assembly history: captures local and remote ops for replay', () => {
+  store.init({ reset: true });
+  store.setTitle('Replay me');
+  const afterLocal = store.getState().opsHistory.length;
+  assert.ok(afterLocal >= 1, 'local op recorded in history');
+  assert.equal(store.getState().opsHistory.at(-1).kind, 'title.set');
+  store.drainOutbox();
+  store.applyRemoteOps([
+    { kind: 'paper.add', payload: { paper: { id: 'W777000001', title: 'Remote addition', notes: [] } }, actor: 'w-peer1' },
+    { kind: 'nonexistent.kind', payload: {}, actor: 'w-peer1' },
+  ]);
+  const s = store.getState();
+  const last = s.opsHistory.at(-1);
+  assert.equal(last.actor, 'w-peer1', 'remote ops recorded with their actor');
+  assert.ok(s.opsHistory.length >= afterLocal + 2);
+  assert.equal(store.getPaper('W777000001')?.title, 'Remote addition');
+});

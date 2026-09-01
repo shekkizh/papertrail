@@ -43,7 +43,7 @@ function renderPulse(state) {
   if (!state.activity.length) { strip.hidden = true; return; }
   strip.hidden = false;
   strip.innerHTML = `
-    <span class="pulse-label">live trail</span>` +
+    <button class="pulse-label" id="replay-btn" title="Replay how this review assembled — every op, in order">⏪ replay</button>` +
     state.activity.slice(0, 48).map((c) =>
       `<button class="pulse-dot p-${c.source} ${c.ok === false ? 'p-fail' : ''}"
         title="${esc(c.tool)} · ${c.source === 'demo-agent' ? 'demo agent' : c.source} · ${timeAgo(c.ts)}${c.ok === false ? ' (failed)' : ''}"
@@ -309,6 +309,11 @@ async function boot() {
   onSelect(() => {
     store.setUiContext(getSelection());
     renderInspectorSafe(inspector, store.getState());
+  });
+  // live-trail delegation: dots open the Activity tab; ⏪ opens the replay
+  $('pulse').addEventListener('click', (e) => {
+    if (e.target.id === 'replay-btn') { import('./ui/replay.js').then((m) => m.openReplay()); return; }
+    if (e.target.classList.contains('pulse-dot')) setTab('activity');
   });
   render(store.getState());
 

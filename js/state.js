@@ -26,6 +26,7 @@ function defaultState() {
     inbox: [],           // normalized papers staged from searches (agent or human)
     artifacts: [],       // { id, kind: comparison|gaps|draft|summary, title, data:{markdown}, createdBy, callId, createdAt, sources }
     activity: [],        // { id, ts, tool, input, summary, source, ok }
+    opsHistory: [],      // { kind, payload, actor, ts } — the assembly story (replay)
     lastQuery: null,
   };
 }
@@ -132,6 +133,9 @@ function migrate(s) {
       summary: typeof c.summary === 'string' ? c.summary.slice(0, 300) : null,
       ok: typeof c.ok === 'boolean' ? c.ok : null,
     }));
+  merged.opsHistory = (Array.isArray(merged.opsHistory) ? merged.opsHistory : [])
+    .filter((o) => o && typeof o === 'object' && typeof o.kind === 'string' && o.payload)
+    .slice(-250);
   merged.title = String(merged.title ?? d.title).slice(0, 120);
   merged.lastQuery = typeof merged.lastQuery === 'string' ? merged.lastQuery.slice(0, 200) : null;
   return merged;
@@ -345,9 +349,20 @@ export function drainOutbox() {
   return ops;
 }
 
+// Persistent assembly history: every op (local or replicated) lands here, so
+// the workspace remembers HOW it was built — powering the replay scrubber.
+// Kept in workspace state, so share snapshots and live joins carry it along.
+
+function pushHistory(kind, payload, actor) {
+  if (!Array.isArray(state.opsHistory)) state.opsHistory = [];
+  state.opsHistory.push({ kind, payload, actor, ts: Date.now() });
+  if (state.opsHistory.length > 250) state.opsHistory = state.opsHistory.slice(-250);
+}
+
 function pushOp(kind, payload) {
   if (applyingRemote || readOnly) return;
   outbox.push({ kind, payload, ts: Date.now() });
+  pushHistory(kind, payload, clientId);
   if (outbox.length > 100) outbox = outbox.slice(-100);
 }
 
@@ -428,6 +443,8 @@ export function applyRemoteOps(ops) {
       applyOne(op);
       if (op.kind === 'paper.add' && op.payload?.paper?.id) touched.push(op.payload.paper.id);
       else if ((op.kind === 'paper.move' || op.kind === 'note.add') && op.payload?.paperId) touched.push(op.payload.paperId);
+      // replicated ops are part of the assembly story — record them
+      pushHistory(op.kind, op.payload, op.actor ?? 'remote');
     }
   } finally {
     applyingRemote = false;
