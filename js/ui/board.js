@@ -26,8 +26,9 @@ function trim(s, n) { return s.length > n ? `${s.slice(0, n - 1)}…` : s; }
 function paperCard(p) {
   const who = WHO[p.addedBy] ?? WHO.human;
   const selected = getSelection().paperId === p.id;
+  const landed = store.getRemoteLanded().includes(p.id);
   const card = el(`
-    <article class="card ${selected ? 'selected' : ''}" draggable="true" data-id="${p.id}" title="${escapeHtml(p.title)}">
+    <article class="card ${selected ? 'selected' : ''} ${landed ? 'remote-land' : ''}" draggable="true" data-id="${p.id}" title="${escapeHtml(p.title)}">
       <button class="card-x" title="Remove from workspace" aria-label="Remove ${escapeHtml(trim(p.title, 40))}">✕</button>
       <h4 class="card-title">${escapeHtml(p.title)}</h4>
       <p class="card-meta">${escapeHtml(p.authors.slice(0, 2).join(', '))}${p.authors.length > 2 ? ' et al.' : ''} · ${p.year ?? 'n.d.'}</p>

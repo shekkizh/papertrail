@@ -10,6 +10,7 @@ import { renderSearch } from './ui/search.js';
 import { renderInspectorSafe } from './ui/inspector.js';
 import { openDemo } from './ui/demoagent.js';
 import { onSelect, getSelection, setTab } from './ui/selection.js';
+import qrcode from '../vendor/qrcode.js'; // vendored MIT: kazuhikoarase/qrcode-generator
 
 const $ = (id) => document.getElementById(id);
 let panelSkipped = false; // a render skipped a focused panel — repaint on focusout
@@ -144,38 +145,50 @@ async function goLive() {
   try {
     const { id } = await sync.createLive();
     try { sessionStorage.setItem('papertrail.ownHash', '1'); } catch { /* private mode */ }
-    const url = `${location.origin}${location.pathname}?live=${id}`;
-    history.replaceState(null, '', url);
+    enterLiveMode(id);
+    history.replaceState(null, '', `${location.pathname}?live=${id}`);
     toast('Workspace is live — the link in your address bar syncs every device.');
-    location.reload();
   } catch (err) {
     toast(`Going live failed: ${err.message}`);
+  } finally {
     $('live-btn').disabled = false;
     $('live-btn').textContent = '⚡ Go live';
+    $('live-btn').hidden = Boolean(sync.currentId);
   }
+}
+
+// Shared by Go live (already has local state) and boot (joins a snapshot) —
+// flips the UI into live mode in place, no reload.
+function enterLiveMode(id) {
+  sync.setCurrentId(id);
+  sync.startSync(id, renderLiveStatus);
+  $('live-btn').hidden = true;
+  $('reset-btn').hidden = true;
+  const share = $('share-btn');
+  share.textContent = 'Copy live link';
+  share.title = 'Copy the live link — anyone (and their agent) opening it joins this workspace';
 }
 
 async function bootLive() {
   const liveId = new URLSearchParams(location.search).get('live');
   if (!liveId || !/^[a-z0-9]{6,20}$/.test(liveId)) return null;
   const { seq } = await sync.joinLive(liveId);
-  sync.setCurrentId(liveId);
-  sync.startSync(liveId, renderLiveStatus);
-  $('live-btn').hidden = true;
-  $('reset-btn').hidden = true;
-  const share = $('share-btn');
-  share.textContent = 'Copy live link';
-  share.title = 'Copy the live link — anyone (and their agent) opening it joins this workspace';
+  enterLiveMode(liveId);
   return { liveId, seq };
 }
 
 async function shareWorkspace() {
-  // in live mode the share button distributes the live link instead
+  // in live mode the share button distributes the live link (with QR) instead
   if (sync.currentId) {
     const url = `${location.origin}${location.pathname}?live=${sync.currentId}`;
+    const qr = qrcode(6, 'M');
+    qr.addData(url);
+    qr.make();
+    let imageDataUrl = null;
+    try { imageDataUrl = qr.createDataURL(6, 8); } catch { /* QR is garnish */ }
     try {
       await navigator.clipboard.writeText(url);
-      toast('Live link copied — every device (and every agent) that opens it joins this workspace.');
+      toast('Live link copied — scan to join from any device. Every human edit and agent tool call replicates with its receipt.', { imageDataUrl });
     } catch {
       prompt('Live link:', url);
     }
@@ -215,13 +228,17 @@ async function duplicateSnapshot() {
   location.reload();
 }
 
-function toast(message) {
+function toast(message, { imageDataUrl = null } = {}) {
   const el = document.createElement('div');
   el.className = 'toast';
-  el.textContent = message;
+  el.innerHTML = `${imageDataUrl ? `<img class="toast-qr" src="${imageDataUrl}" alt="QR code of the live link" />` : ''}<span>${esc(message)}</span>`;
   document.body.appendChild(el);
   setTimeout(() => el.classList.add('show'), 20);
-  setTimeout(() => { el.classList.remove('show'); setTimeout(() => el.remove(), 400); }, 4200);
+  setTimeout(() => { el.classList.remove('show'); setTimeout(() => el.remove(), 400); }, imageDataUrl ? 9000 : 4200);
+}
+
+function esc(s) {
+  return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
 async function bootFromShareLink() {

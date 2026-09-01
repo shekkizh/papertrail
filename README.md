@@ -1,6 +1,6 @@
 # PaperTrail
 
-**Your agent writes; another agent audits; receipts arbitrate.** PaperTrail is a literature-review canvas where your agent works the same board you do — its searches, notes, comparisons, and drafts land as editable objects on your canvas, each carrying a click-to-audit receipt of the exact tool call that produced it. Share the workspace and a *second* agent can audit the first one's claims against its receipts — then one click hands the board back to you to fix what the audit flagged. As a pattern, it's a reference implementation of auditable human-agent collaboration for any web app: expose your state model as typed read/write tools, log every call, let receipts arbitrate.
+**Your agent writes; another agent audits; receipts arbitrate.** PaperTrail is a literature-review canvas where your agent works the same board you do — share a live link and a colleague, *and their agent*, work the board with you in real time across devices, every write receipted — and one click hands the board back to you to fix whatever the audit flagged.
 
 Live app: **https://papertrail-six-weld.vercel.app** *(WebMCP tools register automatically — open it in ChatGPT's browser or Codex, or Chrome with `chrome://flags/#enable-webmcp-testing` enabled)*
 
@@ -32,7 +32,8 @@ Highlights:
   agent-readable artifact. Embedded via [`embed/host.html`](./embed/host.html) with
   `?embedOrigin=`, the snapshot delegates those tools cross-origin (`exposedTo` +
   `getTools({ fromOrigins })`) — a journal site can host a review and hand its audit tools to
-  the visitor's agent.
+  the visitor's agent. Live links are capability URLs — the link is the credential, no auth;
+  that's a deliberate trade for a zero-friction collaboration story.
 - **Receipt re-verification**: every artifact's grounded sources can be re-checked against live
   OpenAlex metadata with one click (⟳ verify) — provenance as evidence, not decoration.
 - **Site tools explorer**: a human-visible panel (⚙ Site tools) listing exactly what any
@@ -174,16 +175,22 @@ agent-written note with a soft overreach so the audit has something to catch.
 5. 1:20 — Agent B (Codex or a second ChatGPT session): *"this is a colleague's review — audit
    it: check the notes against their receipts and the citation contexts"* → it calls
    `get_workspace_state` + `get_citation_contexts`, flags the overreaching note.
-6. 1:50 — Human clicks **⟳ verify** on an artifact: sources refetched from OpenAlex live,
+6. 1:50 — **Escalation — the audit was trust; live proves trust scales.** A second *device* has
+   the `?live=` link open: the guest watches cards land in real time (remote-land flash), drags
+   one to *Synthesized*, and edits one word of the agent's note; on the host, the agent reads
+   the edited text back (`get_artifact`) and revises its draft in place — the badge flip from
+   *agent* to *you* visibly happens on the other machine. Close the beat on both screens
+   showing "⚡ live · 2 online" and the guest opening a receipts popover.
+7. 2:15 — Human clicks **⟳ verify** on an artifact: sources refetched from OpenAlex live,
    diffs shown. *"The audit is re-runnable, not decorative."*
-7. 2:10 — **Duplicate to my browser** → the host edits the flagged note (badge flips to *you*).
-8. 2:30 — Export BibTeX; show the **Activity** tab: every call, inputs, results. Flash
-   [`pattern/demo.html`](./pattern/demo.html) for five seconds: *"same 130 lines, a storefront."*
-   Close, over the split-screen: *"The next web isn't scraped by agents — it's operated by them,
-   with receipts. PaperTrail is one app; the pattern is for all of them."*
+8. 2:35 — Flash [`pattern/demo.html`](./pattern/demo.html) for five seconds: *"same 130 lines,
+   a storefront."* Close, over the split-screen: *"The next web isn't scraped by agents — it's
+   operated by them, with receipts. PaperTrail is one app; the pattern is for all of them."*
 
-Production tips: pre-record agent A's half so model latency doesn't burn the clock; keep the
-share-page tool registration moment in full view; the audit must catch something real.
+Production tips: pre-record agent A's half so model latency doesn't burn the clock; show the
+share-link QR toast for the two-device join (three seconds, most visceral shot there is); the
+audit must catch something real; keep the two-window fallback rehearsed in case the relay
+hiccups on camera.
 
 ## License
 

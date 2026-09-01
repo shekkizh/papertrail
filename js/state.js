@@ -416,12 +416,26 @@ function applyOne({ kind, payload }) {
   }
 }
 
+let remoteLanded = []; // paper ids touched by remote peers — UI flashes them
+let landTimer = null;
+export function getRemoteLanded() { return remoteLanded; }
+
 export function applyRemoteOps(ops) {
   applyingRemote = true;
+  const touched = [];
   try {
-    for (const op of Array.isArray(ops) ? ops : []) applyOne(op);
+    for (const op of Array.isArray(ops) ? ops : []) {
+      applyOne(op);
+      if (op.kind === 'paper.add' && op.payload?.paper?.id) touched.push(op.payload.paper.id);
+      else if ((op.kind === 'paper.move' || op.kind === 'note.add') && op.payload?.paperId) touched.push(op.payload.paperId);
+    }
   } finally {
     applyingRemote = false;
+  }
+  if (touched.length) {
+    remoteLanded = [...new Set([...remoteLanded, ...touched])];
+    clearTimeout(landTimer);
+    landTimer = setTimeout(() => { remoteLanded = []; emit(); }, 1600);
   }
   emit();
 }

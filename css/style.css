@@ -236,6 +236,11 @@ body {
 }
 .card:hover { box-shadow: var(--shadow); border-color: var(--line-strong); }
 .card.selected { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent), var(--shadow); }
+@keyframes remote-land {
+  0% { box-shadow: 0 0 0 3px var(--accent); background: var(--accent-soft); transform: translateY(-2px); }
+  100% { box-shadow: 0 1px 2px rgba(60, 48, 24, 0.06); background: var(--panel); transform: none; }
+}
+.card.remote-land { animation: remote-land 1.6s ease-out; }
 .card.dragging { opacity: 0.45; }
 .card-x {
   position: absolute; top: 8px; right: 8px;
@@ -403,7 +408,9 @@ dialog .hint { padding: 6px 20px 0; line-height: 1.5; }
   padding: 11px 18px; border-radius: 10px; box-shadow: var(--shadow);
   opacity: 0; transition: opacity 0.25s, transform 0.25s; z-index: 100; pointer-events: none;
   max-width: min(560px, 90vw);
+  display: flex; gap: 14px; align-items: center;
 }
+.toast-qr { width: 110px; height: 110px; image-rendering: pixelated; background: #fff; padding: 5px; border-radius: 8px; flex: 0 0 auto; }
 .toast.show { opacity: 1; transform: translate(-50%, 0); }
 
 .pulse-strip {

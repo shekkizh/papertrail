@@ -61,8 +61,10 @@ A share link encodes the whole workspace in the URL: the snapshot registers six 
 a colleague's agent can audit the review's claims against its receipts; one click duplicates
 the snapshot into the visitor's browser to edit. **Go live** takes the same workspace
 cross-device: an op-log relay (Vercel function + Neon Postgres) replicates every human edit
-and agent tool call to every open link within seconds, with a live peer count — your
-collaborator's agent visibly working on your board, receipts attached.
+and agent tool call to every open link within seconds, with a live peer count and a QR-code
+join — your collaborator's agent visibly working on your board, receipts attached. Live links
+are capability URLs (the link is the credential; no auth — a deliberate trade for zero-friction
+collaboration).
 
 **What people and agents can do together that was difficult or impossible before**
 
