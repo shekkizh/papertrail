@@ -7,7 +7,7 @@ only the video recording remains (script in README.md, replicated at the bottom)
 
 ## Live URL
 
-**https://papertrail-six-weld.vercel.app**
+**https://papertrail-platform.vercel.app**
 
 Tested in: ChatGPT desktop browser / Codex (Site tools appear automatically), and Chrome with
 `chrome://flags/#enable-webmcp-testing`. In any other browser the app still runs its tools

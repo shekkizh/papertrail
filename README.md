@@ -2,7 +2,7 @@
 
 **Your agent writes; another agent audits; receipts arbitrate.** PaperTrail is a literature-review canvas where your agent works the same board you do — share a live link and a colleague, *and their agent*, work the board with you in real time across devices, every write receipted — and one click hands the board back to you to fix whatever the audit flagged.
 
-Live app: **https://papertrail-six-weld.vercel.app** *(WebMCP tools register automatically — open it in ChatGPT's browser or Codex, or Chrome with `chrome://flags/#enable-webmcp-testing` enabled)*
+Live app: **https://papertrail-platform.vercel.app** *(WebMCP tools register automatically — open it in ChatGPT's browser or Codex, or Chrome with `chrome://flags/#enable-webmcp-testing` enabled)*
 
 A survey-planning workspace for researchers — sections of paper cards, structured notes,
 comparison tables, gap analyses, drafted related-work sections — with **16 structured tools on
